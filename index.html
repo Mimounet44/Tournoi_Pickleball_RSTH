@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -817,6 +816,9 @@ function buildSchedule(maxAttempts=8){
     else pool=shuffle(pool);
     const orderedIds=pool.map(p=>p.id);
     const sched=[];let totalRelax=0;
+    // earlyPlayedInRound[r] = Set des joueurs ayant joué un match anticipé comptant pour le tour r
+    // Ces joueurs ne jouent PAS de match normal au tour r (le match anticipé est leur match)
+    const earlyPlayedInRound={};
 
     for(let r=0;r<R;r++){
       // ── Remplaçants : prioriser ceux qui ont le plus joué, puis qui ont le moins reposé
@@ -831,11 +833,13 @@ function buildSchedule(maxAttempts=8){
       }
       const subsSet=new Set(subs);subs.forEach(id=>byeCount[id]++);
 
+      // Joueurs ayant déjà joué leur match anticipé pour CE tour → exclus des vagues normales
+      const alreadyEarly=earlyPlayedInRound[r]||new Set();
+
       // ── Tri des actifs pour minimiser l'attente :
       // Les joueurs ayant joué en DERNIÈRE vague au tour précédent sont prioritaires
       // pour jouer en PREMIÈRE vague à ce tour (ils ont attendu le plus longtemps).
-      // Tri : lastWaveIdx décroissant (dernière vague en premier) + aléatoire pour l'équité
-      const activeRaw=orderedIds.filter(id=>!subsSet.has(id));
+      const activeRaw=orderedIds.filter(id=>!subsSet.has(id)&&!alreadyEarly.has(id));
       const active=shuffle(activeRaw).sort((a,b)=>lastWaveIdx[b]-lastWaveIdx[a]);
 
       const waves=[];let offset=0;
@@ -851,7 +855,15 @@ function buildSchedule(maxAttempts=8){
       }
 
       // ── Matchs anticipés (terrains libres)
+      // Règle stricte : un joueur qui joue un match anticipé du tour R+1
+      // NE jouera PAS de match normal au tour R+1 (le match anticipé EST son match pour ce tour).
+      // On ne peut pas non plus anticiper un joueur qui a déjà joué son match normal à ce tour.
       if(r+1<R){
+        // Joueurs déjà engagés dans les vagues normales du tour courant
+        const alreadyPlayedThisRound=new Set(
+          waves.flatMap(wv=>wv.matches.flatMap(m=>[m.pA1,m.pA2,m.pB1,m.pB2]))
+        );
+        // Préfigurer les remplaçants du tour suivant (pour ne pas les anticiper)
         let futureSubs=new Set();
         if(rem>0){
           const sorted=[...orderedIds].sort((a,b)=>{
@@ -867,13 +879,17 @@ function buildSchedule(maxAttempts=8){
           const nw=normalWaves[nwi];
           const usedInWave=new Set(nw.matches.flatMap(m=>[m.pA1,m.pA2,m.pB1,m.pB2]));
           const freeSlots=T-nw.matches.length;if(freeSlots<=0)continue;
-          // Pour les matchs anticipés : prioriser aussi les joueurs qui ont joué en dernière vague
-          const candidates=shuffle(orderedIds.filter(id=>!futureSubs.has(id)&&!usedInWave.has(id)&&!earlyUsed.has(id)))
-            .sort((a,b)=>{
-              const ea=(earlyPlayCount[a]||0),eb=(earlyPlayCount[b]||0);
-              if(ea!==eb)return ea-eb;
-              return lastWaveIdx[b]-lastWaveIdx[a]; // ceux qui ont joué tard d'abord
-            });
+          // Candidats : joueurs qui N'ont PAS joué dans le tour courant (ni vague normale ni déjà anticipé)
+          // et qui ne sont pas remplaçants prévus au tour suivant
+          const candidates=shuffle(orderedIds.filter(id=>
+            !futureSubs.has(id) &&
+            !alreadyPlayedThisRound.has(id) &&   // pas de double match dans le même tour
+            !earlyUsed.has(id)
+          )).sort((a,b)=>{
+            const ea=(earlyPlayCount[a]||0),eb=(earlyPlayCount[b]||0);
+            if(ea!==eb)return ea-eb;
+            return lastWaveIdx[b]-lastWaveIdx[a];
+          });
           const earlyMatches=[];let ci=0;
           for(let slot=0;slot<freeSlots&&ci+3<candidates.length;slot++){
             const group=candidates.slice(ci,ci+4);ci+=4;if(group.length<4)break;
@@ -882,7 +898,17 @@ function buildSchedule(maxAttempts=8){
               ms[0]._early=true;ms[0]._fromRound=r+1;ms[0]._parentWaveIdx=nwi;
               if(ms[0]._relaxed)totalRelax++;
               earlyMatches.push(ms[0]);
-              group.forEach(id=>{earlyUsed.add(id);earlyPlayCount[id]=(earlyPlayCount[id]||0)+1;playCount[id]=(playCount[id]||0)+1;lastWaveIdx[id]=nwi;});
+              group.forEach(id=>{
+                earlyUsed.add(id);
+                alreadyPlayedThisRound.add(id); // marquer comme "a joué" pour ce tour
+                earlyPlayCount[id]=(earlyPlayCount[id]||0)+1;
+                playCount[id]=(playCount[id]||0)+1;
+                lastWaveIdx[id]=nwi;
+                // Inscrire ce joueur comme "déjà joué" pour le tour R+1 afin de l'exclure
+                // des vagues normales du tour suivant
+                if(!earlyPlayedInRound[r+1]) earlyPlayedInRound[r+1]=new Set();
+                earlyPlayedInRound[r+1].add(id);
+              });
             }
           }
           if(earlyMatches.length>0)waves.push({matches:earlyMatches,waveIdx:waves.length,waveTime:'',_isEarlyWave:true,_parentWaveIdx:nwi});
