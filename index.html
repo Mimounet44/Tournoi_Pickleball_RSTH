@@ -745,6 +745,108 @@ function pk(a,b){return a<b?a+'-'+b:b+'-'+a;}
 function pLv(id){const p=ST.players.find(x=>x.id===id);return p?p.lv:3;}
 function pGender(id){const p=ST.players.find(x=>x.id===id);return p?p.g:'M';}
 
+// ─────────────────────────────────────────────────────────────
+// SCORE D'UN MATCH — pénalités/récompenses (plus bas = mieux)
+// ─────────────────────────────────────────────────────────────
+function matchScore(pA1,pA2,pB1,pB2,bal){
+  let sc=0;
+  const lA1=pLv(pA1),lA2=pLv(pA2),lB1=pLv(pB1),lB2=pLv(pB2);
+  const gA1=pGender(pA1),gA2=pGender(pA2),gB1=pGender(pB1),gB2=pGender(pB2);
+
+  if(bal==='level'||bal==='both'){
+    // Pénalité si partenaires de niveaux trop différents
+    sc+=Math.abs(lA1-lA2)*90;
+    sc+=Math.abs(lB1-lB2)*90;
+    // Pénalité forte si les deux équipes ont un écart de niveau total (évite deb vs elite)
+    sc+=Math.abs((lA1+lA2)-(lB1+lB2))*150;
+    // Pénalité supplémentaire si un débutant (lv=1) est opposé à un élite (lv=5)
+    const minA=Math.min(lA1,lA2),maxA=Math.max(lA1,lA2);
+    const minB=Math.min(lB1,lB2),maxB=Math.max(lB1,lB2);
+    if(minA<=1&&maxB>=5) sc+=500;
+    if(minB<=1&&maxA>=5) sc+=500;
+  }
+
+  if(bal==='gender'||bal==='both'){
+    const mixA=(gA1==='M'&&gA2==='F')||(gA1==='F'&&gA2==='M');
+    const mixB=(gB1==='M'&&gB2==='F')||(gB1==='F'&&gB2==='M');
+    const gs=[gA1,gA2,gB1,gB2];
+    const nM=gs.filter(g=>g==='M').length;
+    const nF=gs.filter(g=>g==='F').length;
+    // Forte récompense par paire mixte
+    if(mixA) sc-=700;
+    if(mixB) sc-=700;
+    // Pénalité asymétrie (une paire mixte, l'autre non)
+    if(mixA!==mixB) sc+=350;
+    // Si le groupe contient assez de H et F pour être mixte partout → obligation
+    if(nM>=2&&nF>=2){
+      if(!mixA) sc+=1000;
+      if(!mixB) sc+=1000;
+    }
+  }
+  return sc;
+}
+
+// Renvoie true si la contrainte mixité stricte est satisfaite
+function isMixForced(pA1,pA2,pB1,pB2){
+  const gs=[pGender(pA1),pGender(pA2),pGender(pB1),pGender(pB2)];
+  const nM=gs.filter(g=>g==='M').length,nF=gs.filter(g=>g==='F').length;
+  if(nM<2||nF<2) return true;
+  const mixA=(gs[0]!==gs[1])&&(gs[0]==='M'||gs[0]==='F')&&(gs[1]==='M'||gs[1]==='F');
+  const mixB=(gs[2]!==gs[3])&&(gs[2]==='M'||gs[2]==='F')&&(gs[3]==='M'||gs[3]==='F');
+  return mixA&&mixB;
+}
+
+// ─────────────────────────────────────────────────────────────
+// FORMATION DU GROUPE OPTIMISÉ (mixité + niveau) avant tirage
+// Construit un groupe de N joueurs depuis un pool en cherchant
+// la meilleure répartition H/F et niveaux pour les terrains
+// ─────────────────────────────────────────────────────────────
+function buildOptimalGroup(pool, n, bal){
+  if(pool.length<=n) return [...pool];
+  // On cherche parmi plusieurs tentatives le groupe de n joueurs
+  // dont le score global de matchs possibles est le meilleur
+  // (on simule le meilleur appariement possible pour chaque combinaison)
+  // Pour des raisons de performance on essaie des groupes guidés
+  let bestGroup=null, bestSc=Infinity;
+  const attempts=30;
+  for(let att=0;att<attempts;att++){
+    let candidate;
+    if(bal==='both'||bal==='gender'){
+      // Construire un groupe en alternant H et F selon disponibilité
+      const males=shuffle(pool.filter(p=>p.g==='M'));
+      const females=shuffle(pool.filter(p=>p.g==='F'));
+      const others=shuffle(pool.filter(p=>p.g==='X'));
+      candidate=[];
+      const perTerrain=4, nT=n/4;
+      // Pour chaque terrain vouloir 2H+2F si possible
+      const wantM=Math.min(nT*2,males.length);
+      const wantF=Math.min(nT*2,females.length);
+      for(let i=0;i<wantM;i++) candidate.push(males[i]);
+      for(let i=0;i<wantF;i++) candidate.push(females[i]);
+      // Compléter avec les autres genres si pas assez
+      let extra=[...males.slice(wantM),...females.slice(wantF),...others];
+      shuffle(extra);
+      while(candidate.length<n&&extra.length>0) candidate.push(extra.shift());
+      if(candidate.length<n) break;
+    } else {
+      candidate=shuffle([...pool]).slice(0,n);
+    }
+    // Évalue le score global théorique de ce groupe
+    const ids=candidate.map(p=>p.id);
+    let sc=0;
+    // Paires naïves pour évaluation rapide
+    for(let i=0;i<ids.length;i+=4){
+      if(i+3>=ids.length) break;
+      sc+=matchScore(ids[i],ids[i+1],ids[i+2],ids[i+3],bal);
+    }
+    if(sc<bestSc){bestSc=sc;bestGroup=candidate;}
+  }
+  return bestGroup||shuffle([...pool]).slice(0,n);
+}
+
+// ─────────────────────────────────────────────────────────────
+// VALIDATION D'UN MATCH selon le mode relax
+// ─────────────────────────────────────────────────────────────
 function isMatchValid(pA1,pA2,pB1,pB2,pairCount,oppCount,lastPartnerRound,currentRound){
   if((pairCount[pk(pA1,pA2)]||0)>=1)return false;
   if((pairCount[pk(pB1,pB2)]||0)>=1)return false;
@@ -753,74 +855,79 @@ function isMatchValid(pA1,pA2,pB1,pB2,pairCount,oppCount,lastPartnerRound,curren
   for(const[x,y]of opps){const lastP=lastPartnerRound[pk(x,y)];if(lastP!==undefined&&currentRound-lastP<=1)return false;}
   return true;
 }
-function matchScore(pA1,pA2,pB1,pB2,bal){
-  let sc=0;
-  if(bal==='level'||bal==='both'){
-    const lA1=pLv(pA1),lA2=pLv(pA2),lB1=pLv(pB1),lB2=pLv(pB2);
-    sc+=Math.abs(lA1-lA2)*80;
-    sc+=Math.abs(lB1-lB2)*80;
-    sc+=Math.abs((lA1+lA2)-(lB1+lB2))*120;
-  }
-  if(bal==='gender'||bal==='both'){
-    const gA1=pGender(pA1),gA2=pGender(pA2),gB1=pGender(pB1),gB2=pGender(pB2);
-    const mixA=(gA1==='M'&&gA2==='F')||(gA1==='F'&&gA2==='M');
-    const mixB=(gB1==='M'&&gB2==='F')||(gB1==='F'&&gB2==='M');
-    // Forte récompense pour chaque paire mixte (H+F)
-    if(mixA) sc-=600;
-    if(mixB) sc-=600;
-    // Pénalité si les deux équipes ne sont pas également mixtes (asymétrie)
-    if(mixA!==mixB) sc+=400;
-    // Pénalité si deux joueurs du même genre dominant dans la même paire alors qu'une mixité était possible
-    const allGenders=[gA1,gA2,gB1,gB2];
-    const nM=allGenders.filter(g=>g==='M').length;
-    const nF=allGenders.filter(g=>g==='F').length;
-    // Si on a autant de H que de F dans le groupe de 4, les deux paires DOIVENT être mixtes
-    if(nM>=2&&nF>=2){
-      if(!mixA) sc+=800;
-      if(!mixB) sc+=800;
-    }
-  }
-  return sc;
-}
-// Vérifie si la mixité est respectée quand elle est obligatoire (nM>=2 && nF>=2)
-function isMixForced(pA1,pA2,pB1,pB2){
-  const gs=[pGender(pA1),pGender(pA2),pGender(pB1),pGender(pB2)];
-  const nM=gs.filter(g=>g==='M').length,nF=gs.filter(g=>g==='F').length;
-  if(nM<2||nF<2) return true; // pas assez de H ou F → pas de contrainte
-  const mixA=(gs[0]==='M'&&gs[1]==='F')||(gs[0]==='F'&&gs[1]==='M');
-  const mixB=(gs[2]==='M'&&gs[3]==='F')||(gs[2]==='F'&&gs[3]==='M');
-  return mixA&&mixB;
-}
+
+// ─────────────────────────────────────────────────────────────
+// GÉNÉRATION DES MATCHS pour un groupe
+// Cherche la meilleure combinaison : rotation + mixité + niveau
+// ─────────────────────────────────────────────────────────────
 function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRound,cfg){
   if(group.length<4)return[];
   const n=group.length,bal=cfg.bal;
   const strictGender=(bal==='gender'||bal==='both');
+  const strictLevel=(bal==='level'||bal==='both');
+
   for(let relaxMode=0;relaxMode<=3;relaxMode++){
-    // relaxMode 3 : on relâche aussi la contrainte de mixité forcée
     const enforceGender=strictGender&&relaxMode<3;
     let bestMatches=null,bestScore=Infinity;
-    for(let attempt=0;attempt<(relaxMode===0?20:12);attempt++){
-      const shuffled=shuffle(group);const used=new Set();const matches=[];let sc=0,ok=true;
+    const maxAttempts=relaxMode===0?30:15;
+
+    for(let attempt=0;attempt<maxAttempts;attempt++){
+      // Trier le groupe selon mixité+niveau avant de l'explorer
+      let sorted;
+      if(bal==='both'||bal==='gender'){
+        // Interleave H et F triés par niveau décroissant
+        const ms=shuffle(group.filter(id=>pGender(id)==='M')).sort((a,b)=>pLv(b)-pLv(a));
+        const fs=shuffle(group.filter(id=>pGender(id)==='F')).sort((a,b)=>pLv(b)-pLv(a));
+        const xs=shuffle(group.filter(id=>pGender(id)==='X')).sort((a,b)=>pLv(b)-pLv(a));
+        sorted=[];
+        const ml=Math.max(ms.length,fs.length,xs.length);
+        for(let i=0;i<ml;i++){if(i<ms.length)sorted.push(ms[i]);if(i<fs.length)sorted.push(fs[i]);if(i<xs.length)sorted.push(xs[i]);}
+      } else if(bal==='level'){
+        // Tri serpentin par niveau (meilleur+pire ensemble)
+        const byLv=[...group].sort((a,b)=>pLv(b)-pLv(a));
+        sorted=[];const half=Math.floor(byLv.length/2);
+        for(let i=0;i<half;i++){sorted.push(byLv[i]);sorted.push(byLv[byLv.length-1-i]);}
+        if(byLv.length%2) sorted.push(byLv[half]);
+      } else {
+        sorted=shuffle(group);
+      }
+
+      const used=new Set();const matches=[];let sc=0,ok=true;
       while(true){
-        const avail=shuffled.filter(id=>!used.has(id));if(avail.length<4)break;
+        const avail=sorted.filter(id=>!used.has(id));
+        if(avail.length<4)break;
         const a1=avail[0];let bestM=null,bestMSc=Infinity;
-        for(let i=1;i<avail.length;i++){const a2=avail[i];
-          for(let j=1;j<avail.length;j++){if(j===i)continue;const b1=avail[j];
-            for(let k=j+1;k<avail.length;k++){if(k===i)continue;const b2=avail[k];
+
+        for(let i=1;i<avail.length;i++){
+          const a2=avail[i];
+          for(let j=1;j<avail.length;j++){
+            if(j===i)continue;const b1=avail[j];
+            for(let k=j+1;k<avail.length;k++){
+              if(k===i)continue;const b2=avail[k];
               let valid=true;
-              if(relaxMode===0)valid=isMatchValid(a1,a2,b1,b2,pairCount,oppCount,lastPartnerRound,currentRound);
-              else if(relaxMode===1){if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;else{const opps=[[a1,b1],[a1,b2],[a2,b1],[a2,b2]];for(const[x,y]of opps)if((oppCount[pk(x,y)]||0)>=1){valid=false;break;}}}
-              else if(relaxMode>=2){if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;}
-              // Mixité stricte : si 2H+2F dans le groupe, les paires DOIVENT être mixtes
+              if(relaxMode===0) valid=isMatchValid(a1,a2,b1,b2,pairCount,oppCount,lastPartnerRound,currentRound);
+              else if(relaxMode===1){
+                if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
+                else{const opps=[[a1,b1],[a1,b2],[a2,b1],[a2,b2]];for(const[x,y]of opps)if((oppCount[pk(x,y)]||0)>=1){valid=false;break;}}
+              }
+              else if(relaxMode>=2){
+                if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
+              }
+              // Mixité obligatoire si possible
               if(valid&&enforceGender) valid=isMixForced(a1,a2,b1,b2);
               if(!valid)continue;
-              const msc=matchScore(a1,a2,b1,b2,bal);if(msc<bestMSc){bestMSc=msc;bestM={pA1:a1,pA2:a2,pB1:b1,pB2:b2};}
-            }}}
+              const msc=matchScore(a1,a2,b1,b2,bal);
+              if(msc<bestMSc){bestMSc=msc;bestM={pA1:a1,pA2:a2,pB1:b1,pB2:b2};}
+            }
+          }
+        }
         if(!bestM){ok=false;break;}
-        matches.push(bestM);sc+=bestMSc;[bestM.pA1,bestM.pA2,bestM.pB1,bestM.pB2].forEach(id=>used.add(id));
+        matches.push(bestM);sc+=bestMSc;
+        [bestM.pA1,bestM.pA2,bestM.pB1,bestM.pB2].forEach(id=>used.add(id));
       }
       if(ok&&matches.length*4===n&&sc<bestScore){bestScore=sc;bestMatches=matches;}
     }
+
     if(bestMatches&&bestMatches.length*4===n){
       if(relaxMode>0)bestMatches.forEach(m=>{m._relaxed=relaxMode;});
       bestMatches.forEach(m=>{
@@ -833,6 +940,21 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
     }
   }
   return[];
+}
+
+// ─────────────────────────────────────────────────────────────
+// TRI DES REMPLAÇANTS : équité d'abord, niveau faible ensuite
+// ─────────────────────────────────────────────────────────────
+function sortForSubs(ids,playCount,byeCount){
+  return [...ids].sort((a,b)=>{
+    // 1. Moins de matchs joués → remplaçant en priorité
+    if(playCount[b]!==playCount[a]) return playCount[b]-playCount[a];
+    // 2. Déjà plus souvent remplaçant → moins prioritaire cette fois
+    if(byeCount[a]!==byeCount[b]) return byeCount[a]-byeCount[b];
+    // 3. Niveau le plus faible → remplaçant en priorité (débutants d'abord)
+    if(pLv(a)!==pLv(b)) return pLv(a)-pLv(b);
+    return Math.random()-.5;
+  });
 }
 
 function buildSchedule(maxAttempts=16){
