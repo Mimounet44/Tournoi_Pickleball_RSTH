@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -799,23 +800,44 @@ function buildSchedule(maxAttempts=8){
   ST.cfg=cfg;
   const N=cfg.n,T=cfg.t,R=cfg.r,rem=N%4,activeN=N-rem;
   const wavesPerRound=Math.max(1,Math.ceil(activeN/(T*4)));
+  // Calcul des tailles de vagues (répartition équilibrée)
   const waveSizes=[];{let rem2=activeN;for(let w=0;w<wavesPerRound;w++){const sz=Math.min(T*4,Math.round(rem2/(wavesPerRound-w)/4)*4||4);waveSizes.push(Math.max(4,sz));rem2-=sz;}}
   let bestSched=null,bestScore=Infinity;
+
   for(let att=0;att<maxAttempts;att++){
     const pairCount={},oppCount={},lastPartnerRound={},byeCount={},playCount={};
+    // lastWaveIdx[id] = indice de la dernière vague jouée par ce joueur (au tour précédent)
+    // Permet de prioriser ceux qui ont joué en dernière vague → ils attendent le plus
+    const lastWaveIdx={};
     const players=ST.players.slice(0,N).map(p=>p.id);
-    players.forEach(id=>{byeCount[id]=0;playCount[id]=0;});
+    players.forEach(id=>{byeCount[id]=0;playCount[id]=0;lastWaveIdx[id]=-1;});
     let pool=[...ST.players.slice(0,N)];
     if(cfg.bal==='level'){pool.sort((a,b)=>b.lv-a.lv);}
     else if(cfg.bal==='gender'||cfg.bal==='both'){const males=shuffle(pool.filter(p=>p.g==='M').sort((a,b)=>b.lv-a.lv));const females=shuffle(pool.filter(p=>p.g==='F').sort((a,b)=>b.lv-a.lv));const mixed=shuffle(pool.filter(p=>p.g==='X').sort((a,b)=>b.lv-a.lv));pool=[];const ml=Math.max(males.length,females.length,mixed.length);for(let i=0;i<ml;i++){if(i<males.length)pool.push(males[i]);if(i<females.length)pool.push(females[i]);if(i<mixed.length)pool.push(mixed[i]);}}
     else pool=shuffle(pool);
     const orderedIds=pool.map(p=>p.id);
     const sched=[];let totalRelax=0;
+
     for(let r=0;r<R;r++){
+      // ── Remplaçants : prioriser ceux qui ont le plus joué, puis qui ont le moins reposé
       let subs=[];
-      if(rem>0){const sorted=[...orderedIds].sort((a,b)=>{if(playCount[b]!==playCount[a])return playCount[b]-playCount[a];if(byeCount[a]!==byeCount[b])return byeCount[a]-byeCount[b];return Math.random()-.5;});subs=sorted.slice(0,rem);}
+      if(rem>0){
+        const sorted=[...orderedIds].sort((a,b)=>{
+          if(playCount[b]!==playCount[a])return playCount[b]-playCount[a];
+          if(byeCount[a]!==byeCount[b])return byeCount[a]-byeCount[b];
+          return Math.random()-.5;
+        });
+        subs=sorted.slice(0,rem);
+      }
       const subsSet=new Set(subs);subs.forEach(id=>byeCount[id]++);
-      const active=shuffle(orderedIds.filter(id=>!subsSet.has(id)));
+
+      // ── Tri des actifs pour minimiser l'attente :
+      // Les joueurs ayant joué en DERNIÈRE vague au tour précédent sont prioritaires
+      // pour jouer en PREMIÈRE vague à ce tour (ils ont attendu le plus longtemps).
+      // Tri : lastWaveIdx décroissant (dernière vague en premier) + aléatoire pour l'équité
+      const activeRaw=orderedIds.filter(id=>!subsSet.has(id));
+      const active=shuffle(activeRaw).sort((a,b)=>lastWaveIdx[b]-lastWaveIdx[a]);
+
       const waves=[];let offset=0;
       for(let w=0;w<wavesPerRound;w++){
         const wsize=waveSizes[w]||waveSizes[waveSizes.length-1];
@@ -823,24 +845,45 @@ function buildSchedule(maxAttempts=8){
         if(group.length<4)continue;
         const ms=makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,r,cfg);
         ms.forEach(m=>{if(m._relaxed)totalRelax++;});
-        group.forEach(id=>playCount[id]=(playCount[id]||0)+1);
+        // Mise à jour lastWaveIdx pour chaque joueur de cette vague
+        group.forEach(id=>{playCount[id]=(playCount[id]||0)+1;lastWaveIdx[id]=w;});
         waves.push({matches:ms,waveIdx:w,waveTime:'',_isEarlyWave:false});
       }
+
+      // ── Matchs anticipés (terrains libres)
       if(r+1<R){
         let futureSubs=new Set();
-        if(rem>0){const sorted=[...orderedIds].sort((a,b)=>{if(playCount[b]!==playCount[a])return playCount[b]-playCount[a];if(byeCount[a]!==byeCount[b])return byeCount[a]-byeCount[b];return 0;});sorted.slice(0,rem).forEach(id=>futureSubs.add(id));}
+        if(rem>0){
+          const sorted=[...orderedIds].sort((a,b)=>{
+            if(playCount[b]!==playCount[a])return playCount[b]-playCount[a];
+            if(byeCount[a]!==byeCount[b])return byeCount[a]-byeCount[b];
+            return 0;
+          });
+          sorted.slice(0,rem).forEach(id=>futureSubs.add(id));
+        }
         const earlyUsed=new Set(),earlyPlayCount={};
         const normalWaves=waves.filter(wv=>!wv._isEarlyWave);
         for(let nwi=0;nwi<normalWaves.length;nwi++){
           const nw=normalWaves[nwi];
           const usedInWave=new Set(nw.matches.flatMap(m=>[m.pA1,m.pA2,m.pB1,m.pB2]));
           const freeSlots=T-nw.matches.length;if(freeSlots<=0)continue;
-          const candidates=shuffle(orderedIds.filter(id=>!futureSubs.has(id)&&!usedInWave.has(id)&&!earlyUsed.has(id))).sort((a,b)=>(earlyPlayCount[a]||0)-(earlyPlayCount[b]||0));
+          // Pour les matchs anticipés : prioriser aussi les joueurs qui ont joué en dernière vague
+          const candidates=shuffle(orderedIds.filter(id=>!futureSubs.has(id)&&!usedInWave.has(id)&&!earlyUsed.has(id)))
+            .sort((a,b)=>{
+              const ea=(earlyPlayCount[a]||0),eb=(earlyPlayCount[b]||0);
+              if(ea!==eb)return ea-eb;
+              return lastWaveIdx[b]-lastWaveIdx[a]; // ceux qui ont joué tard d'abord
+            });
           const earlyMatches=[];let ci=0;
           for(let slot=0;slot<freeSlots&&ci+3<candidates.length;slot++){
             const group=candidates.slice(ci,ci+4);ci+=4;if(group.length<4)break;
             const ms=makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,r+1,cfg);
-            if(ms.length>0){ms[0]._early=true;ms[0]._fromRound=r+1;ms[0]._parentWaveIdx=nwi;if(ms[0]._relaxed)totalRelax++;earlyMatches.push(ms[0]);group.forEach(id=>{earlyUsed.add(id);earlyPlayCount[id]=(earlyPlayCount[id]||0)+1;playCount[id]=(playCount[id]||0)+1;});}
+            if(ms.length>0){
+              ms[0]._early=true;ms[0]._fromRound=r+1;ms[0]._parentWaveIdx=nwi;
+              if(ms[0]._relaxed)totalRelax++;
+              earlyMatches.push(ms[0]);
+              group.forEach(id=>{earlyUsed.add(id);earlyPlayCount[id]=(earlyPlayCount[id]||0)+1;playCount[id]=(playCount[id]||0)+1;lastWaveIdx[id]=nwi;});
+            }
           }
           if(earlyMatches.length>0)waves.push({matches:earlyMatches,waveIdx:waves.length,waveTime:'',_isEarlyWave:true,_parentWaveIdx:nwi});
         }
@@ -849,6 +892,8 @@ function buildSchedule(maxAttempts=8){
     }
     if(totalRelax<bestScore){bestScore=totalRelax;bestSched=sched;if(totalRelax===0)break;}
   }
+
+  // ── Calcul des horaires
   let currentTime=cfg.start;
   bestSched.forEach((rd,ri)=>{
     rd.roundTime=currentTime;
@@ -883,6 +928,37 @@ function renderGen(){
   let totalLvDiff=0,matchCount=0,earlyCount=0,relaxCount=0;
   ST.schedule.forEach(rd=>rd.waves.forEach(wv=>{if(wv._isEarlyWave)earlyCount+=wv.matches.length;wv.matches.forEach(m=>{if(m._relaxed)relaxCount++;const lvA=pLv(m.pA1)+pLv(m.pA2),lvB=pLv(m.pB1)+pLv(m.pB2);totalLvDiff+=Math.abs(lvA-lvB);matchCount++;});}));
   const avgLvDiff=matchCount>0?(totalLvDiff/matchCount).toFixed(2):0;
+
+  // ── Analyse de l'attente maximale entre 2 matchs consécutifs d'un même joueur
+  // On reconstruit la séquence de vagues (tour*wavesPerRound + waveIdx) pour chaque joueur
+  let maxWait=0, waitViolations=0;
+  if(p.wavesPerRound>1){
+    const playerSeq={}; // id → [globalWaveIndex, ...]
+    ST.players.slice(0,n).forEach(pl=>playerSeq[pl.id]=[]);
+    let globalWave=0;
+    ST.schedule.forEach((rd,ri)=>{
+      const normalWvs=rd.waves.filter(wv=>!wv._isEarlyWave);
+      normalWvs.forEach((wv,wi)=>{
+        const gw=ri*p.wavesPerRound+wi;
+        wv.matches.forEach(m=>[m.pA1,m.pA2,m.pB1,m.pB2].forEach(id=>{if(playerSeq[id])playerSeq[id].push(gw);}));
+      });
+      rd.waves.filter(wv=>wv._isEarlyWave).forEach(wv=>{
+        const parentWi=wv._parentWaveIdx!=null?wv._parentWaveIdx:0;
+        const gw=ri*p.wavesPerRound+parentWi;
+        wv.matches.forEach(m=>[m.pA1,m.pA2,m.pB1,m.pB2].forEach(id=>{if(playerSeq[id])playerSeq[id].push(gw);}));
+      });
+    });
+    Object.values(playerSeq).forEach(seq=>{
+      const sorted=[...new Set(seq)].sort((a,b)=>a-b);
+      for(let i=1;i<sorted.length;i++){
+        const wait=sorted[i]-sorted[i-1]-1;
+        if(wait>maxWait)maxWait=wait;
+        if(wait>1)waitViolations++;
+      }
+    });
+  }
+  const waitOk=p.wavesPerRound<=1||maxWait<=1;
+
   const ccb=document.getElementById('ccBox');
   if(ccb)ccb.innerHTML=`
     <div class="cc-row"><span class="cc-ico">${p.rem===0?'✅':'ℹ️'}</span><span class="cc-lbl">Tous jouent à chaque tour</span><span class="cc-badge ${p.rem===0?'ccb-ok':'ccb-info'}">${p.rem===0?'Oui':p.rem+' remplaçant(s)/tour'}</span></div>
@@ -890,6 +966,7 @@ function renderGen(){
     <div class="cc-row"><span class="cc-ico">${dupCount===0?'✅':'⚠️'}</span><span class="cc-lbl">Partenaires uniques</span><span class="cc-badge ${dupCount===0?'ccb-ok':'ccb-warn'}">${dupCount===0?'Aucun doublon':dupCount+' doublon(s)'}</span></div>
     <div class="cc-row"><span class="cc-ico">${relaxCount===0?'✅':'⚠️'}</span><span class="cc-lbl">Contraintes adv. / cooldown</span><span class="cc-badge ${relaxCount===0?'ccb-ok':'ccb-warn'}">${relaxCount===0?'Toutes respectées':relaxCount+' relâché(s)'}</span></div>
     <div class="cc-row"><span class="cc-ico">${maxPlay-minPlay<=1?'✅':'⚠️'}</span><span class="cc-lbl">Équité matchs joués</span><span class="cc-badge ${maxPlay-minPlay<=1?'ccb-ok':'ccb-warn'}">${minPlay}–${maxPlay} matchs</span></div>
+    ${p.wavesPerRound>1?`<div class="cc-row"><span class="cc-ico">${waitOk?'✅':'⚠️'}</span><span class="cc-lbl">Attente max entre 2 matchs</span><span class="cc-badge ${waitOk?'ccb-ok':'ccb-warn'}">${p.wavesPerRound<=1?'N/A (1 vague)':waitOk?'≤ 1 vague ✓':maxWait+' vague(s) — '+waitViolations+' cas'}</span></div>`:''}
     <div class="cc-row"><span class="cc-ico">${+avgLvDiff<1?'✅':+avgLvDiff<2?'ℹ️':'⚠️'}</span><span class="cc-lbl">Équilibre niveau</span><span class="cc-badge ${+avgLvDiff<1?'ccb-ok':+avgLvDiff<2?'ccb-info':'ccb-warn'}">${avgLvDiff} étoile(s)/match</span></div>
     <div class="cc-row"><span class="cc-ico">✅</span><span class="cc-lbl">Horaires</span><span class="cc-badge ccb-info">${start} → ${endTime}</span></div>`;
   const sp=document.getElementById('schedPreview');if(!sp)return;
