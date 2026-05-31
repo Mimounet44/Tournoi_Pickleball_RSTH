@@ -755,16 +755,51 @@ function isMatchValid(pA1,pA2,pB1,pB2,pairCount,oppCount,lastPartnerRound,curren
 }
 function matchScore(pA1,pA2,pB1,pB2,bal){
   let sc=0;
-  if(bal==='level'||bal==='both'){const lA1=pLv(pA1),lA2=pLv(pA2),lB1=pLv(pB1),lB2=pLv(pB2);sc+=Math.abs(lA1-lA2)*80;sc+=Math.abs(lB1-lB2)*80;sc+=Math.abs((lA1+lA2)-(lB1+lB2))*120;}
-  if(bal==='gender'||bal==='both'){const gA1=pGender(pA1),gA2=pGender(pA2),gB1=pGender(pB1),gB2=pGender(pB2);if(gA1!==gA2)sc-=300;if(gB1!==gB2)sc-=300;if((gA1!==gA2)!==(gB1!==gB2))sc+=200;}
+  if(bal==='level'||bal==='both'){
+    const lA1=pLv(pA1),lA2=pLv(pA2),lB1=pLv(pB1),lB2=pLv(pB2);
+    sc+=Math.abs(lA1-lA2)*80;
+    sc+=Math.abs(lB1-lB2)*80;
+    sc+=Math.abs((lA1+lA2)-(lB1+lB2))*120;
+  }
+  if(bal==='gender'||bal==='both'){
+    const gA1=pGender(pA1),gA2=pGender(pA2),gB1=pGender(pB1),gB2=pGender(pB2);
+    const mixA=(gA1==='M'&&gA2==='F')||(gA1==='F'&&gA2==='M');
+    const mixB=(gB1==='M'&&gB2==='F')||(gB1==='F'&&gB2==='M');
+    // Forte récompense pour chaque paire mixte (H+F)
+    if(mixA) sc-=600;
+    if(mixB) sc-=600;
+    // Pénalité si les deux équipes ne sont pas également mixtes (asymétrie)
+    if(mixA!==mixB) sc+=400;
+    // Pénalité si deux joueurs du même genre dominant dans la même paire alors qu'une mixité était possible
+    const allGenders=[gA1,gA2,gB1,gB2];
+    const nM=allGenders.filter(g=>g==='M').length;
+    const nF=allGenders.filter(g=>g==='F').length;
+    // Si on a autant de H que de F dans le groupe de 4, les deux paires DOIVENT être mixtes
+    if(nM>=2&&nF>=2){
+      if(!mixA) sc+=800;
+      if(!mixB) sc+=800;
+    }
+  }
   return sc;
+}
+// Vérifie si la mixité est respectée quand elle est obligatoire (nM>=2 && nF>=2)
+function isMixForced(pA1,pA2,pB1,pB2){
+  const gs=[pGender(pA1),pGender(pA2),pGender(pB1),pGender(pB2)];
+  const nM=gs.filter(g=>g==='M').length,nF=gs.filter(g=>g==='F').length;
+  if(nM<2||nF<2) return true; // pas assez de H ou F → pas de contrainte
+  const mixA=(gs[0]==='M'&&gs[1]==='F')||(gs[0]==='F'&&gs[1]==='M');
+  const mixB=(gs[2]==='M'&&gs[3]==='F')||(gs[2]==='F'&&gs[3]==='M');
+  return mixA&&mixB;
 }
 function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRound,cfg){
   if(group.length<4)return[];
   const n=group.length,bal=cfg.bal;
+  const strictGender=(bal==='gender'||bal==='both');
   for(let relaxMode=0;relaxMode<=3;relaxMode++){
+    // relaxMode 3 : on relâche aussi la contrainte de mixité forcée
+    const enforceGender=strictGender&&relaxMode<3;
     let bestMatches=null,bestScore=Infinity;
-    for(let attempt=0;attempt<12;attempt++){
+    for(let attempt=0;attempt<(relaxMode===0?20:12);attempt++){
       const shuffled=shuffle(group);const used=new Set();const matches=[];let sc=0,ok=true;
       while(true){
         const avail=shuffled.filter(id=>!used.has(id));if(avail.length<4)break;
@@ -775,7 +810,9 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
               let valid=true;
               if(relaxMode===0)valid=isMatchValid(a1,a2,b1,b2,pairCount,oppCount,lastPartnerRound,currentRound);
               else if(relaxMode===1){if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;else{const opps=[[a1,b1],[a1,b2],[a2,b1],[a2,b2]];for(const[x,y]of opps)if((oppCount[pk(x,y)]||0)>=1){valid=false;break;}}}
-              else if(relaxMode===2){if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;}
+              else if(relaxMode>=2){if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;}
+              // Mixité stricte : si 2H+2F dans le groupe, les paires DOIVENT être mixtes
+              if(valid&&enforceGender) valid=isMixForced(a1,a2,b1,b2);
               if(!valid)continue;
               const msc=matchScore(a1,a2,b1,b2,bal);if(msc<bestMSc){bestMSc=msc;bestM={pA1:a1,pA2:a2,pB1:b1,pB2:b2};}
             }}}
@@ -798,7 +835,7 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
   return[];
 }
 
-function buildSchedule(maxAttempts=8){
+function buildSchedule(maxAttempts=16){
   const cfg=getCfg();if(cfg.n<4){alert('Il faut au moins 4 joueurs.');return false;}
   ST.cfg=cfg;
   const N=cfg.n,T=cfg.t,R=cfg.r,rem=N%4,activeN=N-rem;
@@ -825,12 +862,15 @@ function buildSchedule(maxAttempts=8){
     const earlyPlayedInRound={};
 
     for(let r=0;r<R;r++){
-      // ── Remplaçants : prioriser ceux qui ont le plus joué, puis qui ont le moins reposé
+      // ── Remplaçants : 1) le moins de matchs joués, 2) le plus de byes déjà subis,
+      //    3) niveau le plus faible (débutants remplaçants en priorité), 4) aléatoire
       let subs=[];
       if(rem>0){
         const sorted=[...orderedIds].sort((a,b)=>{
           if(playCount[b]!==playCount[a])return playCount[b]-playCount[a];
           if(byeCount[a]!==byeCount[b])return byeCount[a]-byeCount[b];
+          // priorité aux joueurs de plus faible niveau (débutants d'abord)
+          if(pLv(a)!==pLv(b))return pLv(a)-pLv(b);
           return Math.random()-.5;
         });
         subs=sorted.slice(0,rem);
@@ -874,6 +914,7 @@ function buildSchedule(maxAttempts=8){
           const sorted=[...orderedIds].sort((a,b)=>{
             if(playCount[b]!==playCount[a])return playCount[b]-playCount[a];
             if(byeCount[a]!==byeCount[b])return byeCount[a]-byeCount[b];
+            if(pLv(a)!==pLv(b))return pLv(a)-pLv(b);
             return 0;
           });
           sorted.slice(0,rem).forEach(id=>futureSubs.add(id));
@@ -1104,7 +1145,15 @@ document.addEventListener('DOMContentLoaded',()=>{
 function computeStandings(){
   const stats={};
   ST.players.slice(0,ST.cfg.n).forEach(p=>{stats[p.id]={id:p.id,name:p.name,g:p.g,lv:p.lv,pts:0,w:0,d:0,l:0,gf:0,ga:0,played:0,byeTours:0,h2h:{}};});
-  ST.schedule.forEach(rd=>rd.subs.forEach(id=>{if(stats[id])stats[id].byeTours++;}));
+  // Compensation bye : chaque tour en tant que remplaçant = +2 pts (match nul fictif 0-0)
+  ST.schedule.forEach(rd=>rd.subs.forEach(id=>{
+    if(!stats[id])return;
+    stats[id].byeTours++;
+    stats[id].pts+=2;   // équivalent match nul
+    stats[id].d++;      // compté comme nul
+    stats[id].played++; // compté comme match joué
+    // gf et ga restent à 0 (score fictif 0-0)
+  }));
   ST.schedule.forEach((round,r)=>round.waves.forEach((wv,w)=>wv.matches.forEach((m,mi)=>{
     const res=getRes(r,w,mi);if(res.ga===''||res.gb==='')return;
     const ga=+res.ga,gb=+res.gb;
@@ -1120,7 +1169,7 @@ function stblHTML(arr,limit){
   const showBye=arr.some(s=>s.byeTours>0);
   const rows=(limit?arr.slice(0,limit):arr).map((s,i)=>{
     const gd=s.gf-s.ga;
-    return `<tr><td class="rank-c" style="color:${i<3?'var(--grn)':'var(--dim)'}">${med[i]||i+1}</td><td><span class="p-ico">${s.g==='M'?'♂':s.g==='F'?'♀':'⚧'}</span> ${s.name}${s.byeTours>0?` <span class="sub-badge">🟡×${s.byeTours}</span>`:''}</td><td class="played-c">${s.played}</td><td class="wc">${s.w}</td><td class="dc">${s.d}</td><td class="lc">${s.l}</td><td>${s.gf}</td><td>${s.ga}</td><td class="${gd>=0?'gdp':'gdn'}">${gd>0?'+':''}${gd}</td><td class="pts-c">${s.pts}</td></tr>`;
+    return `<tr><td class="rank-c" style="color:${i<3?'var(--grn)':'var(--dim)'}">${med[i]||i+1}</td><td><span class="p-ico">${s.g==='M'?'♂':s.g==='F'?'♀':'⚧'}</span> ${s.name}${s.byeTours>0?` <span class="sub-badge" title="${s.byeTours} tour(s) au repos · +${s.byeTours*2} pts de compensation">🟡×${s.byeTours}</span>`:''}</td><td class="played-c">${s.played}</td><td class="wc">${s.w}</td><td class="dc">${s.d}</td><td class="lc">${s.l}</td><td>${s.gf}</td><td>${s.ga}</td><td class="${gd>=0?'gdp':'gdn'}">${gd>0?'+':''}${gd}</td><td class="pts-c">${s.pts}</td></tr>`;
   }).join('');
   return `<thead><tr><th>#</th><th style="text-align:left">Joueur</th><th title="Matchs joués">J</th><th style="color:var(--grn)">V</th><th style="color:var(--ylw)">N</th><th style="color:var(--red)">D</th><th>BP</th><th>BC</th><th>+/-</th><th style="color:var(--grn)">Pts</th></tr></thead><tbody>${rows}</tbody>`;
 }
@@ -2104,6 +2153,8 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
       <ul>
         <li>Si le nombre de joueurs n'est <strong>pas un multiple de 4</strong>, un ou plusieurs joueurs sont désignés <strong>remplaçants</strong> à chaque tour.</li>
         <li>La rotation est équitable : l'écart de matchs joués entre joueurs est <strong>au maximum de 1</strong> sur l'ensemble du tournoi.</li>
+        <li>En priorité, les remplaçants sont choisis parmi les joueurs de <strong>niveau le plus faible</strong> (en cas d'égalité de repos), afin de limiter l'impact compétitif.</li>
+        <li>Chaque tour au repos donne droit à <strong>+2 points de compensation</strong> (match nul fictif 0–0) pour ne pas pénaliser le classement.</li>
         <li>Les remplaçants sont indiqués dans le programme avant chaque tour.</li>
       </ul>
       <h4>Matchs anticipés</h4>
@@ -2148,6 +2199,13 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
         <li><strong>Match nul</strong> : <strong>2 points</strong> pour chaque joueur</li>
         <li><strong>Défaite</strong> : <strong>0 point</strong></li>
       </ul>
+      <h4>Compensation remplaçant (tour au repos)</h4>
+      <ul>
+        <li>Lorsqu'un joueur est désigné <strong>remplaçant</strong> pour un tour (nombre de joueurs non multiple de 4), il reçoit automatiquement <strong>2 points de compensation</strong>, équivalant à un <strong>match nul fictif 0 – 0</strong>.</li>
+        <li>Ce match fictif est comptabilisé comme un <strong>nul</strong> dans les statistiques (colonne N) et apparaît dans le total des matchs joués.</li>
+        <li>Cela garantit une <strong>équité totale</strong> : être remplaçant ne pénalise pas le classement par rapport aux joueurs qui ont joué.</li>
+        <li>Les tours au repos sont affichés dans le classement avec le badge <span style="background:#7a5c00;color:#ffd080;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700">🟡×N</span> pour information.</li>
+      </ul>
       <h4>Ordre de départage (à égalité de points)</h4>
       <ol style="padding-left:18px;font-size:13px;color:var(--muted);line-height:2">
         <li>Points totaux</li>
@@ -2157,11 +2215,6 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
         <li>Nombre de victoires</li>
         <li>Nombre de matchs joués</li>
       </ol>
-      <h4>Matchs non joués (remplaçants)</h4>
-      <ul>
-        <li>Les tours au repos (remplaçant) ne comptent pas comme défaites : ils sont simplement neutres et n'affectent pas le goal-average.</li>
-        <li>Le nombre de tours au repos est affiché dans le classement (badge 🟡) pour information.</li>
-      </ul>
     </div>
   </div>
 
