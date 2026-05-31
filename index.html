@@ -855,13 +855,14 @@ function buildSchedule(maxAttempts=8){
       }
 
       // ── Matchs anticipés (terrains libres)
-      // Règle stricte : un joueur qui joue un match anticipé du tour R+1
-      // NE jouera PAS de match normal au tour R+1 (le match anticipé EST son match pour ce tour).
-      // On ne peut pas non plus anticiper un joueur qui a déjà joué son match normal à ce tour.
+      // Règle absolue : un joueur qui joue un match anticipé pour le tour R+1
+      //   1. N'a PAS joué de match normal dans aucune vague du tour courant R
+      //   2. Ne jouera PAS de match normal au tour R+1 (son anticipé EST son match)
       if(r+1<R){
-        // Joueurs déjà engagés dans les vagues normales du tour courant
+        // Tous les joueurs ayant joué dans n'importe quelle vague normale de ce tour
         const alreadyPlayedThisRound=new Set(
-          waves.flatMap(wv=>wv.matches.flatMap(m=>[m.pA1,m.pA2,m.pB1,m.pB2]))
+          waves.filter(wv=>!wv._isEarlyWave)
+               .flatMap(wv=>wv.matches.flatMap(m=>[m.pA1,m.pA2,m.pB1,m.pB2]))
         );
         // Préfigurer les remplaçants du tour suivant (pour ne pas les anticiper)
         let futureSubs=new Set();
@@ -873,23 +874,18 @@ function buildSchedule(maxAttempts=8){
           });
           sorted.slice(0,rem).forEach(id=>futureSubs.add(id));
         }
-        const earlyUsed=new Set(),earlyPlayCount={};
+        // Candidats globaux : n'ont PAS joué ce tour, ne sont pas remplaçants tour suivant
+        // et ne sont pas déjà retenus pour un autre anticipé ce tour
+        const globalEarlyUsed=new Set();
         const normalWaves=waves.filter(wv=>!wv._isEarlyWave);
         for(let nwi=0;nwi<normalWaves.length;nwi++){
           const nw=normalWaves[nwi];
-          const usedInWave=new Set(nw.matches.flatMap(m=>[m.pA1,m.pA2,m.pB1,m.pB2]));
           const freeSlots=T-nw.matches.length;if(freeSlots<=0)continue;
-          // Candidats : joueurs qui N'ont PAS joué dans le tour courant (ni vague normale ni déjà anticipé)
-          // et qui ne sont pas remplaçants prévus au tour suivant
           const candidates=shuffle(orderedIds.filter(id=>
             !futureSubs.has(id) &&
-            !alreadyPlayedThisRound.has(id) &&   // pas de double match dans le même tour
-            !earlyUsed.has(id)
-          )).sort((a,b)=>{
-            const ea=(earlyPlayCount[a]||0),eb=(earlyPlayCount[b]||0);
-            if(ea!==eb)return ea-eb;
-            return lastWaveIdx[b]-lastWaveIdx[a];
-          });
+            !alreadyPlayedThisRound.has(id) &&
+            !globalEarlyUsed.has(id)
+          )).sort((a,b)=>lastWaveIdx[b]-lastWaveIdx[a]);
           const earlyMatches=[];let ci=0;
           for(let slot=0;slot<freeSlots&&ci+3<candidates.length;slot++){
             const group=candidates.slice(ci,ci+4);ci+=4;if(group.length<4)break;
@@ -899,13 +895,9 @@ function buildSchedule(maxAttempts=8){
               if(ms[0]._relaxed)totalRelax++;
               earlyMatches.push(ms[0]);
               group.forEach(id=>{
-                earlyUsed.add(id);
-                alreadyPlayedThisRound.add(id); // marquer comme "a joué" pour ce tour
-                earlyPlayCount[id]=(earlyPlayCount[id]||0)+1;
+                globalEarlyUsed.add(id);
                 playCount[id]=(playCount[id]||0)+1;
                 lastWaveIdx[id]=nwi;
-                // Inscrire ce joueur comme "déjà joué" pour le tour R+1 afin de l'exclure
-                // des vagues normales du tour suivant
                 if(!earlyPlayedInRound[r+1]) earlyPlayedInRound[r+1]=new Set();
                 earlyPlayedInRound[r+1].add(id);
               });
@@ -942,6 +934,8 @@ function pObj(id){return ST.players.find(x=>x.id===id);}
 
 function renderGen(){
   const {n,t,r,mt,tt,tp,start}=ST.cfg;const p=computeScheduleParams(ST.cfg);
+  // playCount : chaque joueur doit jouer exactement r matchs (les anticipés remplacent un match normal)
+  // On compte tous les matchs de toutes les vagues — chaque apparition = 1 match joué
   const playCount={};ST.players.slice(0,n).forEach(pl=>playCount[pl.id]=0);
   ST.schedule.forEach(rd=>rd.waves.forEach(wv=>wv.matches.forEach(m=>[m.pA1,m.pA2,m.pB1,m.pB2].forEach(id=>{playCount[id]=(playCount[id]||0)+1;}))));
   const pVals=Object.values(playCount);const maxPlay=Math.max(...pVals),minPlay=Math.min(...pVals);
