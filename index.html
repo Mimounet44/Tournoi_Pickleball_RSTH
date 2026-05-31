@@ -83,6 +83,8 @@ async function ensureUserDoc(user){
 }
 
 onAuthStateChanged(auth, async (user)=>{
+  // Si on est en mode Live anonyme (enterLiveMode déjà appelé), on ignore
+  if(USER_ROLE === 'spectator' && !user) return;
   if(user){
     CURRENT_USER = user;
     await ensureUserDoc(user);
@@ -115,24 +117,79 @@ window.loginGoogle = async function(){
   try { await signInWithPopup(auth, gProvider); }
   catch(e){ showAuthMsg(authErrMsg(e.code),'red'); }
 };
-window.registerEmail = async function(){
-  const name  = document.getElementById('reg_name').value.trim();
-  const email = document.getElementById('reg_email').value.trim();
-  const pwd   = document.getElementById('reg_pwd').value;
-  const pwd2  = document.getElementById('reg_pwd2').value;
-  if(!name||!email||!pwd){ showAuthMsg('Tous les champs sont requis.','red'); return; }
-  if(pwd!==pwd2){ showAuthMsg('Les mots de passe ne correspondent pas.','red'); return; }
-  if(pwd.length<6){ showAuthMsg('Mot de passe : 6 caractères minimum.','red'); return; }
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, pwd);
-    await updateProfile(cred.user,{ displayName: name });
-    await setDoc(doc(db,'users',cred.user.uid),{
-      email, name, role:'spectator', createdAt: serverTimestamp()
-    });
-  } catch(e){ showAuthMsg(authErrMsg(e.code),'red'); }
-};
+
 window.logout = async function(){
-  clearInterval(ST.timerIv); unsubAll(); await signOut(auth);
+  clearInterval(ST.timerIv); unsubAll();
+  USER_ROLE = null; CURRENT_USER = null;
+  if(auth.currentUser) await signOut(auth);
+  else showLogin(); // mode live anonyme : retour direct à l'écran connexion
+};
+
+// ── Mode Live sans compte (spectateur anonyme) ────────────
+window.enterLiveMode = function(){
+  CURRENT_USER = null;
+  USER_ROLE    = 'spectator';
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+  applyRoleUI();
+  // Abonnements en lecture seule (pas besoin d'auth pour lire si règles ouvertes en lecture)
+  subscribeToTournamentPublic();
+  subscribeToResultsPublic();
+};
+function subscribeToTournamentPublic(){
+  unsubTournament = onSnapshot(doc(db,'tournament','current'), (snap)=>{
+    if(!snap.exists()) return;
+    const data=snap.data();
+    if(data.cfg)      ST.cfg      = data.cfg;
+    if(data.players)  ST.players  = data.players;
+    if(data.schedule) ST.schedule = data.schedule;
+    if(data.activeRound!=null) ST.activeRound = data.activeRound;
+    if(ST.page===4) renderTournament();
+    if(ST.page===5) renderFinal();
+    if(ST.schedule.length>0 && ST.page<4) goTo(4);
+  });
+}
+function subscribeToResultsPublic(){
+  unsubResults = onSnapshot(collection(db,'results'), (snap)=>{
+    snap.forEach(d=>{ ST.results[d.id]=d.data(); });
+    if(ST.page===4){ renderMatches(); renderMiniStandings(); checkDone(); }
+    if(ST.page===5) renderFinal();
+  });
+}
+
+// ── Création de compte par l'admin (depuis page Config) ───
+window.adminCreateUser = async function(){
+  if(!isAdmin()){ alert('Admin uniquement.'); return; }
+  const name  = document.getElementById('newU_name').value.trim();
+  const email = document.getElementById('newU_email').value.trim();
+  const pwd   = document.getElementById('newU_pwd').value;
+  const role  = document.getElementById('newU_role').value;
+  const msg   = document.getElementById('newUserMsg');
+  if(!name||!email||!pwd){ msg.textContent='Tous les champs sont requis.'; msg.style.color='var(--red)'; return; }
+  if(pwd.length<6){ msg.textContent='Mot de passe : 6 car. minimum.'; msg.style.color='var(--red)'; return; }
+  try {
+    // Créer l'utilisateur via la REST API Firebase Auth (sans déconnecter l'admin)
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=AIzaSyAvppGIS7M12LFgaPEuFdo-ed6rrAtgcSc`,
+      { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ email, password:pwd, returnSecureToken:true }) }
+    );
+    const data = await res.json();
+    if(data.error){ throw new Error(data.error.message); }
+    const uid = data.localId;
+    // Créer le doc Firestore
+    await setDoc(doc(db,'users',uid),{
+      email, name, role, createdAt: serverTimestamp(), createdBy: CURRENT_USER.uid
+    });
+    await auditLog('admin_create_user',{ uid, email, name, role });
+    msg.textContent=`✅ Compte créé : ${name} (${role})`; msg.style.color='var(--grn)';
+    document.getElementById('newU_name').value='';
+    document.getElementById('newU_email').value='';
+    document.getElementById('newU_pwd').value='';
+    setTimeout(()=>{ msg.textContent=''; },4000);
+  } catch(e){
+    msg.textContent='❌ '+e.message; msg.style.color='var(--red)';
+  }
 };
 function authErrMsg(code){
   const map={
@@ -170,8 +227,12 @@ function roleBadge(role){
   return map[role]||role;
 }
 function applyRoleUI(){
-  document.getElementById('hdrUserName').textContent =
-    (CURRENT_USER?.displayName||CURRENT_USER?.email||'?') + ' · ' + roleBadge(USER_ROLE);
+  const name = CURRENT_USER
+    ? (CURRENT_USER.displayName||CURRENT_USER.email||'?')
+    : '📺 Mode Live';
+  document.getElementById('hdrUserName').textContent = name + ' · ' + roleBadge(USER_ROLE);
+  const lBtn = document.getElementById('logoutBtn');
+  if(lBtn) lBtn.textContent = CURRENT_USER ? 'Déconnexion' : 'Quitter';
 
   // Éléments admin-only
   document.querySelectorAll('[data-role="admin"]').forEach(el=>{
@@ -181,6 +242,9 @@ function applyRoleUI(){
   document.querySelectorAll('[data-role="scorer"]').forEach(el=>{
     el.style.display = isScorer() ? '' : 'none';
   });
+  // Info spectateur sur page 4
+  const si = document.getElementById('spectatorInfo');
+  if(si) si.style.display = USER_ROLE==='spectator' ? '' : 'none';
   updateStepVisibility();
 }
 function updateStepVisibility(){
@@ -955,6 +1019,8 @@ body{font-family:'Exo 2',sans-serif;background:var(--bg);color:var(--ink);min-he
 .login-divider::before{left:0}.login-divider::after{right:0}
 .btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:10px;background:var(--s1);border:1.5px solid var(--bdr);border-radius:8px;font-family:'Exo 2',sans-serif;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;transition:all .15s}
 .btn-google:hover{background:var(--s2);border-color:var(--bdr2)}
+.btn-live{display:block;width:100%;padding:14px 16px;background:linear-gradient(135deg,var(--ink2),#2a4060);border:2px solid #4a6080;border-radius:10px;font-family:'Oswald',sans-serif;font-size:17px;letter-spacing:.8px;color:#7adcff;cursor:pointer;transition:all .2s;text-align:center;text-transform:uppercase}
+.btn-live:hover{background:linear-gradient(135deg,#2a3050,#1a4070);border-color:#7adcff;box-shadow:0 0 16px rgba(100,200,255,.2)}
 
 /* HEADER */
 .hdr{background:var(--ink2);color:#fff;padding:0 20px;height:58px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:300;box-shadow:0 3px 20px rgba(0,0,0,.3)}
@@ -1177,15 +1243,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
   <div class="login-box">
     <div class="login-brand">🏓 Americano</div>
     <div class="login-sub">Pickleball Tournament Manager</div>
-    <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:8px"></div>
+    <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:12px"></div>
 
-    <div class="login-tabs">
-      <button class="ltab active" onclick="showTab('login')">Connexion</button>
-      <button class="ltab" onclick="showTab('register')">Créer un compte</button>
-    </div>
-
-    <!-- CONNEXION -->
-    <div id="tabLogin" class="login-form">
+    <!-- CONNEXION STAFF -->
+    <div class="login-form" id="tabLogin">
       <div>
         <label>Email</label>
         <input type="email" id="li_email" placeholder="votre@email.com" onkeydown="if(event.key==='Enter')loginEmail()">
@@ -1200,43 +1261,21 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
         <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/></svg>
         Continuer avec Google
       </button>
-      <div class="info info-b" style="font-size:12px;margin-top:4px">
-        👁 Les nouveaux comptes sont <strong>Spectateurs</strong> par défaut.<br>
-        Contactez l'admin pour obtenir un accès scorer.
-      </div>
     </div>
 
-    <!-- INSCRIPTION -->
-    <div id="tabRegister" class="login-form" style="display:none">
-      <div>
-        <label>Prénom / Nom</label>
-        <input type="text" id="reg_name" placeholder="Marie Dupont">
+    <!-- SÉPARATEUR + ACCÈS LIVE SANS COMPTE -->
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--bdr)">
+      <div style="text-align:center;font-size:12px;color:var(--muted);margin-bottom:10px">
+        Vous souhaitez juste suivre le tournoi ?
       </div>
-      <div>
-        <label>Email</label>
-        <input type="email" id="reg_email" placeholder="votre@email.com">
-      </div>
-      <div>
-        <label>Mot de passe (6 car. min)</label>
-        <input type="password" id="reg_pwd" placeholder="••••••••">
-      </div>
-      <div>
-        <label>Confirmer le mot de passe</label>
-        <input type="password" id="reg_pwd2" placeholder="••••••••" onkeydown="if(event.key==='Enter')registerEmail()">
-      </div>
-      <button class="btn btn-g" style="width:100%;justify-content:center" onclick="registerEmail()">✓ Créer mon compte</button>
+      <button class="btn-live" onclick="enterLiveMode()">
+        📺 Accès Live — Spectateur
+        <span style="font-size:11px;opacity:.7;display:block;font-family:'Exo 2',sans-serif;font-weight:400;text-transform:none;letter-spacing:0;margin-top:2px">Sans compte · Lecture seule · Temps réel</span>
+      </button>
     </div>
+
   </div>
 </div>
-
-<script>
-function showTab(t){
-  document.getElementById('tabLogin').style.display=t==='login'?'flex':'none';
-  document.getElementById('tabRegister').style.display=t==='register'?'flex':'none';
-  document.querySelectorAll('.ltab').forEach((el,i)=>el.classList.toggle('active',(t==='login'&&i===0)||(t==='register'&&i===1)));
-  document.getElementById('authMsg').textContent='';
-}
-</script>
 
 <!-- ══════════════════════════════════════════════════════════
      APPLICATION PRINCIPALE
@@ -1249,39 +1288,77 @@ function showTab(t){
   <div class="hdr-user" id="hdrUserName"></div>
   <div class="hdr-r">
     <button class="hdr-btn" id="ruleBtn" onclick="toggleRules()">📋 Règlement</button>
-    <!-- Bouton "Live" pour scorer/spectateur qui n'a pas accès aux étapes config -->
     <button class="hdr-btn" data-role="scorer" onclick="goToLive()" style="display:none">📺 Live</button>
     <button class="hdr-btn" data-role="admin" onclick="toggleAdminPanel()" style="display:none">👑 Admin</button>
     <button class="hdr-btn" id="backBtn" style="display:none" onclick="goBack()">← Retour</button>
-    <button class="hdr-btn" onclick="logout()">Déconnexion</button>
+    <button class="hdr-btn" id="logoutBtn" onclick="logout()">Quitter</button>
   </div>
 </header>
 
 <!-- PANNEAU ADMIN -->
 <div id="adminPanel" style="display:none">
   <div class="admin-panel">
-    <div class="admin-panel-ttl">👑 Gestion des accès</div>
-    <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:end;max-width:700px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:960px;flex-wrap:wrap">
+
+      <!-- Créer un compte -->
       <div>
-        <label style="color:rgba(255,255,255,.5)">UID de l'utilisateur</label>
-        <input type="text" id="adminUidInput" placeholder="Copier depuis Firebase Auth → Users → User UID"
-               style="background:#2a2018;border-color:#4a3828;color:#fff">
+        <div class="admin-panel-ttl">➕ Créer un compte utilisateur</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <label style="color:rgba(255,255,255,.5)">Prénom / Nom</label>
+            <input type="text" id="newU_name" placeholder="Marie Dupont" style="background:#2a2018;border-color:#4a3828;color:#fff">
+          </div>
+          <div>
+            <label style="color:rgba(255,255,255,.5)">Email</label>
+            <input type="email" id="newU_email" placeholder="marie@exemple.com" style="background:#2a2018;border-color:#4a3828;color:#fff">
+          </div>
+          <div>
+            <label style="color:rgba(255,255,255,.5)">Mot de passe (6 car. min)</label>
+            <input type="password" id="newU_pwd" placeholder="••••••••" style="background:#2a2018;border-color:#4a3828;color:#fff">
+          </div>
+          <div style="display:flex;gap:10px;align-items:flex-end">
+            <div style="flex:1">
+              <label style="color:rgba(255,255,255,.5)">Rôle</label>
+              <select id="newU_role" style="background:#2a2018;border-color:#4a3828;color:#fff">
+                <option value="scorer">✏️ Scorer</option>
+                <option value="spectator">👁 Spectateur</option>
+                <option value="admin">👑 Admin</option>
+              </select>
+            </div>
+            <button class="btn btn-g btn-sm" onclick="adminCreateUser()">✓ Créer</button>
+          </div>
+          <div id="newUserMsg" style="font-size:13px;min-height:18px"></div>
+        </div>
       </div>
+
+      <!-- Changer le rôle d'un compte existant -->
       <div>
-        <label style="color:rgba(255,255,255,.5)">Rôle</label>
-        <select id="adminRoleSelect" style="background:#2a2018;border-color:#4a3828;color:#fff">
-          <option value="admin">👑 Admin</option>
-          <option value="scorer" selected>✏️ Scorer</option>
-          <option value="spectator">👁 Spectateur</option>
-        </select>
+        <div class="admin-panel-ttl">🔑 Modifier le rôle d'un compte</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <label style="color:rgba(255,255,255,.5)">UID de l'utilisateur</label>
+            <input type="text" id="adminUidInput" placeholder="Firebase Auth → Users → User UID" style="background:#2a2018;border-color:#4a3828;color:#fff">
+          </div>
+          <div style="display:flex;gap:10px;align-items:flex-end">
+            <div style="flex:1">
+              <label style="color:rgba(255,255,255,.5)">Nouveau rôle</label>
+              <select id="adminRoleSelect" style="background:#2a2018;border-color:#4a3828;color:#fff">
+                <option value="admin">👑 Admin</option>
+                <option value="scorer" selected>✏️ Scorer</option>
+                <option value="spectator">👁 Spectateur</option>
+              </select>
+            </div>
+            <button class="btn btn-y btn-sm" onclick="setUserRole()">Appliquer</button>
+          </div>
+          <div id="adminRoleMsg" style="font-size:13px;min-height:18px"></div>
+          <div style="font-size:11px;color:rgba(255,255,255,.35);line-height:1.6">
+            💡 <strong style="color:#ffd080">Admin</strong> = tout ·
+            <strong style="color:#80c8ff">Scorer</strong> = scores + noms ·
+            <strong style="color:rgba(255,255,255,.5)">Spectateur</strong> = lecture seule
+          </div>
+        </div>
       </div>
-      <div><label style="color:transparent">.</label><button class="btn btn-y btn-sm" onclick="setUserRole()">Appliquer</button></div>
-    </div>
-    <div id="adminRoleMsg" style="margin-top:8px;font-size:13px;min-height:18px"></div>
-    <div style="margin-top:12px;font-size:12px;color:rgba(255,255,255,.4)">
-      💡 Rôles : <strong style="color:#ffd080">Admin</strong> = tout · 
-      <strong style="color:#80c8ff">Scorer</strong> = saisie scores + modification noms joueurs uniquement · 
-      <strong style="color:rgba(255,255,255,.5)">Spectateur</strong> = lecture seule
+
     </div>
   </div>
 </div>
@@ -1310,7 +1387,7 @@ function showTab(t){
         <div>
           <label>Nombre de joueurs inscrits</label>
           <select id="cfg_n" onchange="onCfgChange()">
-            <option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option><option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option><option value="17">17</option><option value="18">18</option><option value="19">19</option><option value="20">20</option><option value="21">21</option><option value="22">22</option><option value="23">23</option><option value="24" selected>24</option><option value="25">25</option><option value="26">26</option><option value="27">27</option><option value="28">28</option><option value="29">29</option><option value="30">30</option><option value="32">32</option><option value="36">36</option><option value="40">40</option><option value="48">48</option><option value="56">56</option><option value="64">64</option><option value="72">72</option><option value="80">80</option>
+            <option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option><option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option><option value="17">17</option><option value="18">18</option><option value="19">19</option><option value="20">20</option><option value="21">21</option><option value="22">22</option><option value="23">23</option><option value="24" selected>24</option><option value="25">25</option><option value="26">26</option><option value="27">27</option><option value="28">28</option><option value="29">29</option><option value="30">30</option><option value="31">31</option><option value="32">32</option><option value="33">33</option><option value="34">34</option><option value="35">35</option><option value="36">36</option><option value="37">37</option><option value="38">38</option><option value="39">39</option><option value="40">40</option><option value="41">41</option><option value="42">42</option><option value="43">43</option><option value="44">44</option><option value="45">45</option><option value="46">46</option><option value="47">47</option><option value="48">48</option><option value="49">49</option><option value="50">50</option><option value="51">51</option><option value="52">52</option><option value="53">53</option><option value="54">54</option><option value="55">55</option><option value="56">56</option><option value="57">57</option><option value="58">58</option><option value="59">59</option><option value="60">60</option><option value="61">61</option><option value="62">62</option><option value="63">63</option><option value="64">64</option><option value="65">65</option><option value="66">66</option><option value="67">67</option><option value="68">68</option><option value="69">69</option><option value="70">70</option><option value="71">71</option><option value="72">72</option><option value="73">73</option><option value="74">74</option><option value="75">75</option><option value="76">76</option><option value="77">77</option><option value="78">78</option><option value="79">79</option><option value="80">80</option>
           </select>
         </div>
         <div>
