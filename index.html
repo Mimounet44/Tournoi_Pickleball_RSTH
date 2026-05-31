@@ -125,6 +125,25 @@ window.logout = async function(){
   else showLogin(); // mode live anonyme : retour direct à l'écran connexion
 };
 
+// ── Mode Live sans compte avec redirection ────────────────
+window.enterLiveModeAndGo = function(target){
+  CURRENT_USER = null;
+  USER_ROLE    = 'spectator';
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+  applyRoleUI();
+  subscribeToTournamentPublic();
+  subscribeToResultsPublic();
+  if(target === 'R'){
+    // Afficher le règlement
+    setTimeout(()=>{ if(typeof toggleRules==='function') toggleRules(); }, 100);
+  } else if(target === 5){
+    setTimeout(()=>{ goTo(5); }, 100);
+  } else {
+    setTimeout(()=>{ goTo(4); }, 100);
+  }
+};
+
 // ── Mode Live sans compte (spectateur anonyme) ────────────
 window.enterLiveMode = function(){
   CURRENT_USER = null;
@@ -269,6 +288,59 @@ function updateStepVisibility(){
 window.toggleAdminPanel = function(){
   const el=document.getElementById('adminPanel');
   el.style.display = el.style.display==='none' ? 'block' : 'none';
+};
+
+// ── Charger la liste des utilisateurs ────────────────────
+window.loadUserList = async function(){
+  if(!isAdmin()) return;
+  const listEl = document.getElementById('userListBody');
+  if(!listEl) return;
+  listEl.innerHTML = '<tr><td colspan="4" style="color:var(--muted);font-size:13px;padding:10px 0">Chargement…</td></tr>';
+  try {
+    const { getDocs, collection: col2 } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap = await getDocs(col2(db,'users'));
+    if(snap.empty){ listEl.innerHTML='<tr><td colspan="4" style="color:var(--muted);font-size:13px;padding:10px 0">Aucun utilisateur enregistré.</td></tr>'; return; }
+    listEl.innerHTML='';
+    snap.forEach(d=>{
+      const u=d.data(); const uid=d.id;
+      const isMe = CURRENT_USER && uid===CURRENT_USER.uid;
+      const roleIcon={admin:'👑',scorer:'✏️',spectator:'👁'}[u.role]||'?';
+      const tr=document.createElement('tr');
+      tr.style.cssText='border-bottom:1px solid rgba(255,255,255,.08);font-size:13px';
+      tr.innerHTML=`
+        <td style="padding:8px 6px;color:#fff;font-weight:600">${u.name||'—'}</td>
+        <td style="padding:8px 6px;color:rgba(255,255,255,.55);font-size:12px">${u.email||'—'}</td>
+        <td style="padding:8px 6px">${roleIcon} <span style="color:rgba(255,255,255,.7)">${u.role||'—'}</span></td>
+        <td style="padding:8px 6px">
+          ${isMe ? '<span style="color:rgba(255,255,255,.3);font-size:11px">— vous —</span>' :
+            `<button onclick="adminDeleteUser('${uid}','${(u.name||u.email||uid).replace(/'/g,"\\'")}')"
+              style="background:#8a1810;border:1px solid #c04030;color:#fff;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-family:\'Exo 2\',sans-serif;font-weight:600;transition:all .15s"
+              onmouseover="this.style.background=\'#c02818\'" onmouseout="this.style.background=\'#8a1810\'">
+              🗑 Supprimer
+            </button>`
+          }
+        </td>`;
+      listEl.appendChild(tr);
+    });
+  } catch(e){
+    listEl.innerHTML=`<tr><td colspan="4" style="color:var(--red);font-size:13px;padding:10px 0">Erreur : ${e.message}</td></tr>`;
+  }
+};
+
+window.adminDeleteUser = async function(uid, name){
+  if(!isAdmin()){ alert('Admin uniquement.'); return; }
+  if(!confirm(`Supprimer l'utilisateur "${name}" ?\nCette action est irréversible.`)) return;
+  try {
+    const { deleteDoc, doc: doc2 } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    await deleteDoc(doc2(db,'users',uid));
+    await auditLog('admin_delete_user',{ uid, name });
+    // Supprimer aussi via la REST API Firebase Auth (nécessite un token admin — si indispo, on supprime juste Firestore)
+    const msg = document.getElementById('userListMsg');
+    if(msg){ msg.textContent=`✅ Utilisateur "${name}" supprimé (Firestore). Pensez à le retirer de Firebase Auth si besoin.`; msg.style.color='var(--grn)'; setTimeout(()=>{ msg.textContent=''; },5000); }
+    window.loadUserList();
+  } catch(e){
+    alert('Erreur suppression : '+e.message);
+  }
 };
 
 // ── Attribuer un rôle ─────────────────────────────────────
@@ -1284,6 +1356,27 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
     <div class="login-sub">Pickleball Tournament Manager</div>
     <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:12px"></div>
 
+    <!-- ACCÈS RAPIDE SPECTATEUR -->
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
+      <div style="text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:4px">Accès spectateur</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="enterLiveModeAndGo(4)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#7adcff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#7adcff'" onmouseout="this.style.borderColor='#4a7090'">
+          <span style="width:6px;height:6px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span> Live
+        </button>
+        <button onclick="enterLiveModeAndGo(5)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#ffd080'" onmouseout="this.style.borderColor='#4a7090'">
+          🏆 Classement
+        </button>
+        <button onclick="enterLiveModeAndGo('R')" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:rgba(255,255,255,.7);font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='rgba(255,255,255,.6)'" onmouseout="this.style.borderColor='#4a7090'">
+          📋 Règlement
+        </button>
+      </div>
+    </div>
+
+    <div style="text-align:center;font-size:11px;color:var(--dim);margin-bottom:16px;position:relative">
+      <span style="background:var(--s0);padding:0 10px;position:relative;z-index:1">Connexion staff</span>
+      <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:var(--bdr)"></div>
+    </div>
+
     <!-- CONNEXION STAFF -->
     <div class="login-form" id="tabLogin">
       <div>
@@ -1299,17 +1392,6 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
       <button class="btn-google" onclick="loginGoogle()">
         <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/></svg>
         Continuer avec Google
-      </button>
-    </div>
-
-    <!-- SÉPARATEUR + ACCÈS LIVE SANS COMPTE -->
-    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--bdr)">
-      <div style="text-align:center;font-size:12px;color:var(--muted);margin-bottom:10px">
-        Vous souhaitez juste suivre le tournoi ?
-      </div>
-      <button class="btn-live" onclick="enterLiveMode()">
-        📺 Accès Live — Spectateur
-        <span style="font-size:11px;opacity:.7;display:block;font-family:'Exo 2',sans-serif;font-weight:400;text-transform:none;letter-spacing:0;margin-top:2px">Sans compte · Lecture seule · Temps réel</span>
       </button>
     </div>
 
@@ -1396,6 +1478,31 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
             <strong style="color:rgba(255,255,255,.5)">Spectateur</strong> = lecture seule
           </div>
         </div>
+      </div>
+
+      <!-- Liste des utilisateurs inscrits -->
+      <div style="grid-column:1/-1;margin-top:16px;border-top:1px solid rgba(255,255,255,.1);padding-top:16px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+          <div class="admin-panel-ttl" style="margin-bottom:0">👥 Utilisateurs inscrits</div>
+          <button onclick="loadUserList()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:4px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-family:'Exo 2',sans-serif;font-weight:600">🔄 Rafraîchir</button>
+        </div>
+        <div id="userListMsg" style="font-size:13px;min-height:18px;margin-bottom:8px"></div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;min-width:480px">
+            <thead>
+              <tr style="border-bottom:1px solid rgba(255,255,255,.15)">
+                <th style="text-align:left;padding:6px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:rgba(255,255,255,.4)">Nom</th>
+                <th style="text-align:left;padding:6px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:rgba(255,255,255,.4)">Email</th>
+                <th style="text-align:left;padding:6px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:rgba(255,255,255,.4)">Rôle</th>
+                <th style="padding:6px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:rgba(255,255,255,.4)">Action</th>
+              </tr>
+            </thead>
+            <tbody id="userListBody">
+              <tr><td colspan="4" style="color:rgba(255,255,255,.3);font-size:13px;padding:10px 0">Cliquez sur "Rafraîchir" pour charger la liste.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,.25);margin-top:8px;line-height:1.6">⚠️ La suppression retire l'utilisateur de Firestore. Pour supprimer aussi le compte d'authentification, rendez-vous dans la console Firebase → Authentication.</div>
       </div>
 
     </div>
@@ -1607,6 +1714,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
     <div class="rules-section">
       <p>Le tournoi <strong>Pickleball Americano</strong> est un format de compétition convivial et social où les partenaires changent à chaque match. Contrairement aux tournois classiques en équipes fixes, chaque joueur accumule ses points <strong>individuellement</strong>, quelle que soit la performance de son partenaire du moment.</p>
       <p>Ce format garantit une rotation maximale des partenaires et des adversaires, favorisant les rencontres entre tous les participants et un classement qui reflète fidèlement le niveau individuel de chacun.</p>
+      <h4>Esprit du jeu</h4>
+      <ul>
+        <li>L'Americano privilégie le <strong>fair-play</strong> et la convivialité : chaque joueur rencontrera la majorité des autres participants au fil du tournoi.</li>
+        <li>Le résultat individuel prime sur la victoire d'équipe : un joueur peut gagner même si son partenaire du moment a moins bien joué.</li>
+        <li>Les joueurs sont invités à <strong>accueillir leurs adversaires</strong> en début de match et à se serrer la main (ou la raquette) à l'issue de chaque partie.</li>
+      </ul>
     </div>
   </div>
 
@@ -1618,13 +1731,15 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
         <li>Le terrain mesure <strong>13,41 m × 6,10 m</strong>, divisé en deux par un filet à <strong>86 cm</strong> au centre et 91 cm sur les côtés.</li>
         <li>La raquette (paddle) est solide, sans cordage. La balle est en plastique perforé, plus lente qu'une balle de tennis.</li>
         <li>Chaque équipe de <strong>2 joueurs</strong> se place de chaque côté du filet.</li>
+        <li>Les joueurs portent des chaussures de sport adaptées aux surfaces dures (déconseillé : chaussures running à semelle épaisse).</li>
       </ul>
       <h4>Service</h4>
       <ul>
         <li>Le service est effectué <strong>en diagonale</strong>, depuis derrière la ligne de fond, en frappant la balle <strong>sous la ceinture</strong> (service cuillère, balle frappée sous l'axe de la raquette).</li>
         <li>La balle doit rebondir dans la zone de service adverse en évitant la <strong>zone de cuisine</strong> (no-volley zone, les 2,13 m de part et d'autre du filet).</li>
         <li>On ne peut servir qu'une seule fois par point. Une faute de service entraîne la perte du service.</li>
-        <li>Le serveur annonce le score avant chaque service.</li>
+        <li>Le serveur annonce le score avant chaque service (score de l'équipe qui sert, score adverse, numéro du serveur : ex. "3-2-2").</li>
+        <li>Au début d'un jeu, le premier serveur de l'équipe au service est le joueur en position droite du terrain.</li>
       </ul>
       <h4>La règle du double rebond (Two-Bounce Rule)</h4>
       <ul>
@@ -1637,12 +1752,21 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
         <li>Il est <strong>interdit de frapper la balle à la volée</strong> (sans rebond) lorsqu'on se trouve dans la zone de cuisine ou sur sa ligne.</li>
         <li>On peut entrer dans la cuisine uniquement pour jouer une balle après rebond, puis quitter la zone.</li>
         <li>Un joueur qui suit son élan dans la cuisine après une volée commet une faute, même si la balle n'y est pas tombée.</li>
+        <li>Attention : si un joueur est dans la cuisine et qu'un coéquipier joue une volée, la faute est quand même sifflée si le contact avec la cuisine est lié au mouvement de frappe.</li>
       </ul>
       <h4>Fautes et point</h4>
       <ul>
         <li>La balle qui sort des limites, touche le filet ou ne passe pas par-dessus constitue une faute.</li>
         <li>Toute balle jouée en volée depuis la cuisine est une faute.</li>
+        <li>Une balle qui touche les lignes est considérée <strong>bonne</strong>, sauf lors du service (la ligne de cuisine est faute au service).</li>
         <li>Seule l'équipe <strong>au service</strong> peut marquer un point (règle classique) — <em>dans ce tournoi, les scores sont libres, définis par l'organisateur.</em></li>
+      </ul>
+      <h4>Comportement et fair-play</h4>
+      <ul>
+        <li>En cas de doute sur une balle (in/out), la balle est déclarée <strong>bonne</strong> pour l'adversaire.</li>
+        <li>Toute décision contestée peut être tranchée par un arbitre ou par le consensus des 4 joueurs.</li>
+        <li>Les appels de fautes se font <strong>immédiatement</strong> après le point, pas rétroactivement.</li>
+        <li>Le respect des adversaires, partenaires et arbitres est obligatoire. Tout comportement antisportif peut entraîner une disqualification.</li>
       </ul>
     </div>
   </div>
@@ -1728,6 +1852,30 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
         <li><strong>Substitution</strong> : si un joueur doit quitter le tournoi en cours, l'organisateur peut le remplacer par un autre joueur disponible. Le remplaçant prend sa place pour tous les matchs restants. Les scores déjà joués restent inchangés.</li>
         <li><strong>Modification de nom</strong> : les noms des joueurs peuvent être corrigés à tout moment sans affecter les résultats.</li>
         <li><strong>Scores</strong> : les scores peuvent être saisis et modifiés à tout moment. Le classement se met à jour en temps réel sur tous les appareils connectés.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card mt12">
+    <div class="card-ttl">🛡️ Sécurité et organisation</div>
+    <div class="rules-section">
+      <h4>Avant le tournoi</h4>
+      <ul>
+        <li>Les joueurs doivent s'échauffer suffisamment avant de jouer (minimum 10 minutes de mobilisation articulaire et d'échanges à vitesse modérée).</li>
+        <li>Chaque participant est responsable de son propre équipement. Raquettes et balles supplémentaires peuvent être disponibles sur demande auprès de l'organisateur.</li>
+        <li>Les créneaux de jeu sont affichés sur l'interface Live. Les joueurs doivent être prêts sur leur terrain <strong>2 minutes avant l'heure prévue</strong>.</li>
+      </ul>
+      <h4>Pendant le tournoi</h4>
+      <ul>
+        <li>En cas d'absence ou de retard d'un joueur, le match peut être déclaré forfait après <strong>5 minutes d'attente</strong> si l'organisateur le décide.</li>
+        <li>Toute blessure doit être signalée immédiatement à l'organisateur. Le joueur blessé peut être remplacé selon la procédure de substitution.</li>
+        <li>L'utilisation de téléphones portables pendant un match est déconseillée sauf urgence.</li>
+      </ul>
+      <h4>Respect des terrains</h4>
+      <ul>
+        <li>Ne pas laisser de matériel (sacs, bouteilles, etc.) à proximité immédiate des lignes de fond.</li>
+        <li>Récupérer les balles sur les terrains voisins uniquement entre les points, jamais pendant l'échange.</li>
+        <li>En cas de balle étrangère sur le terrain, annoncer "Let !" pour rejouer le point.</li>
       </ul>
     </div>
   </div>
