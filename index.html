@@ -285,6 +285,7 @@ function applyRoleUI(){
   const si = document.getElementById('spectatorInfo');
   if(si) si.style.display = isSpec ? '' : 'none';
   updateStepVisibility();
+  updateFwdBtn();
 }
 function updateStepVisibility(){
   // Admin : étapes 1–5 | Scorer/Spectateur : 4–5 seulement
@@ -537,10 +538,11 @@ window.goBack = function(){
 function canGoFwd(){
   if(!isAdmin()) return false;
   if(ST.rulesOpen) return false;
-  if(ST.page===1) return ST.players.length >= ST.cfg.n;
-  if(ST.page===2) return ST.players.length >= ST.cfg.n;
+  const n = ST.cfg && ST.cfg.n ? ST.cfg.n : 0;
+  if(ST.page===1) return n >= 4;
+  if(ST.page===2) return ST.players.length >= n;
   if(ST.page===3) return ST.schedule.length > 0;
-  if(ST.page===4) return true; // classement toujours accessible
+  if(ST.page===4) return true;
   return false;
 }
 function updateFwdBtn(){
@@ -551,15 +553,10 @@ function updateFwdBtn(){
 }
 window.goFwd = function(){
   if(!canGoFwd()) return;
-  if(ST.page===1){
-    if(ST.players.length >= ST.cfg.n) goTo(2);
-  } else if(ST.page===2){
-    goTo(3);
-  } else if(ST.page===3){
-    goTo(4);
-  } else if(ST.page===4){
-    goTo(5);
-  }
+  if(ST.page===1) goTo(2);
+  else if(ST.page===2) goTo(3);
+  else if(ST.page===3) goTo(4);
+  else if(ST.page===4) goTo(5);
 };
 function updateSpectatorNav(n){
   // Mettre en surbrillance le bouton actif dans la nav spectateur
@@ -863,15 +860,11 @@ function addMinutes(timeStr,mins){
 function computeScheduleParams(c){
   const N=c.n,T=c.t,R=c.r;
   const simultaneous=T*4;
-  // Si vagues forcées, calcul des remplaçants en fonction
   let wavesPerRound, activeN, rem;
   if(c.waves && c.waves > 0){
     wavesPerRound = c.waves;
-    // Nombre de joueurs actifs = wavesPerRound * T * 4, mais pas plus que N
-    const maxActive = wavesPerRound * T * 4;
-    activeN = Math.min(N, maxActive);
-    // Si maxActive > N, on ne peut pas remplir toutes les vagues
-    // On ajuste pour ne garder que les vagues qui se remplissent
+    const rawActive = Math.min(N, wavesPerRound * T * 4);
+    activeN = Math.floor(rawActive / 4) * 4;
     rem = N - activeN;
   } else {
     rem=N%4; activeN=N-rem;
@@ -889,18 +882,26 @@ window.onCfgChange = function(){
   else {
     const endTime=addMinutes(c.start,p.totalDuration);
     msg=`<strong>${p.N} joueurs</strong> · <strong>${c.t} terrains</strong> · <strong>${c.r} tours (matchs/joueur)</strong><br>`;
-    // Vagues
-    if(c.waves && c.waves > 0){
+    const forcedWaves = c.waves && c.waves > 0;
+    if(forcedWaves){
+      // Mode vagues forcées : calcul explicite
       const playersPerWave = c.t * 4;
-      const totalActive = Math.min(c.n, c.waves * playersPerWave);
-      const subs = c.n - totalActive;
-      msg+=`Vagues par tour : <strong>${p.wavesPerRound}</strong> (forcé) × ${playersPerWave} joueurs simultanés`;
-      if(subs > 0) msg+=` · <strong style="color:#e87040">${subs} remplaçant${subs>1?'s':''}/tour</strong>`;
-      else msg+=` · <strong style="color:var(--grn)">Tous jouent</strong>`;
-      msg+='<br>';
-      if(subs > 0)
-        msg+=`⚠️ Avec ${c.waves} vague${c.waves>1?'s':''} × ${c.t} terrains = ${totalActive} joueurs actifs sur ${c.n} → <strong>${subs} en attente</strong><br>`;
+      const totalSlots = c.waves * playersPerWave;
+      const subs = p.rem;
+      msg += `🌊 Mode <strong>${c.waves} vague${c.waves>1?'s':''} fixe${c.waves>1?'s':''}</strong> × ${c.t} terrain${c.t>1?'s':''} = <strong>${playersPerWave * c.waves} places</strong> par tour<br>`;
+      if(subs > 0){
+        cls='info-y'; icon='⚠️';
+        msg += `🟡 <strong>${subs} remplaçant${subs>1?'s':''} par tour</strong> (${p.activeN} joueurs actifs sur ${p.N})`;
+        msg += ` — les remplaçants tournent équitablement<br>`;
+      } else if(totalSlots > p.N){
+        msg += `⚠️ ${c.waves} vague${c.waves>1?'s':''} × ${playersPerWave} = ${totalSlots} places, mais seulement ${p.N} joueurs — l'algorithme réduira les vagues vides<br>`;
+      } else {
+        msg += `✅ Tous les joueurs jouent à chaque tour<br>`;
+      }
+      msg += `Durée estimée : <strong>~${p.totalDuration} min</strong> · Fin vers <strong>${endTime}</strong>`;
+      msg += `<br>📋 Structure : ${c.r} tours de <strong>${p.wavesPerRound} vague${p.wavesPerRound>1?'s':''}</strong> × ${c.mt} min (+${c.tt} min transition)`;
     } else {
+      // Mode automatique
       msg+=`Vagues par tour : <strong>${p.wavesPerRound}</strong> × ${p.baseWaveSize} joueurs simultanés`;
       if(p.rem>0) msg+=` + <strong>${p.rem} remplaçant${p.rem>1?'s':''}</strong>`;
       msg+='<br>';
@@ -910,13 +911,25 @@ window.onCfgChange = function(){
         msg+=`✅ Tous les joueurs jouent à chaque tour · Terrains libres comblés par matchs anticipés<br>`;
       else
         msg+=`⚠️ ${p.rem} joueur${p.rem>1?'s':''}/tour au repos — terrains libres comblés par matchs anticipés<br>`;
+      msg+=`Durée estimée : <strong>~${p.totalDuration} min</strong> · Fin vers <strong>${endTime}</strong>`;
+      if(p.wavesPerRound>1)
+        msg+=`<br>📋 Structure : ${c.r} tours de ${p.wavesPerRound} vagues × ${c.mt}min (+${c.tt}min transition)`;
     }
-    msg+=`Durée estimée : <strong>~${p.totalDuration} min</strong> · Fin vers <strong>${endTime}</strong>`;
-    if(p.wavesPerRound>1)
-      msg+=`<br>📋 Structure : ${c.r} tours de ${p.wavesPerRound} vagues × ${c.mt}min (+${c.tt}min transition)`;
   }
   document.getElementById('cfgBox').className='info '+cls;
   document.getElementById('cfgBox').innerHTML=icon+' '+msg;
+  // Mise à jour de l'indication sous le select vagues
+  const hint = document.getElementById('wavesHint');
+  if(hint){
+    const c2=getCfg();
+    if(c2.waves && c2.waves>0 && c2.n>=4){
+      const slots = c2.waves * c2.t * 4;
+      const subs2 = Math.max(0, c2.n - Math.floor(Math.min(c2.n,slots)/4)*4);
+      hint.innerHTML = subs2>0
+        ? `→ ${Math.min(c2.n,slots) - subs2} joueurs jouent · <strong style="color:#e87040">${subs2} remplaçant${subs2>1?'s':''}/tour</strong>`
+        : `→ Tous les ${c2.n} joueurs jouent`;
+    } else { hint.innerHTML=''; }
+  }
   updateFwdBtn();
 };
 
@@ -1174,17 +1187,20 @@ function buildSchedule(maxAttempts=16){
   ST.cfg=cfg;
   const N=cfg.n,T=cfg.t,R=cfg.r;
   // Vagues : forcées ou automatiques
+  const forcedWaves = cfg.waves && cfg.waves > 0;
   let wavesPerRound, activeN, rem;
-  if(cfg.waves && cfg.waves > 0){
+  if(forcedWaves){
     wavesPerRound = cfg.waves;
     const maxActive = wavesPerRound * T * 4;
-    activeN = Math.min(N, maxActive);
+    // activeN = plus grand multiple de 4 ne dépassant pas min(N, maxActive)
+    const rawActive = Math.min(N, maxActive);
+    activeN = Math.floor(rawActive / 4) * 4;
     rem = N - activeN;
   } else {
     rem=N%4; activeN=N-rem;
     wavesPerRound=Math.max(1,Math.ceil(activeN/(T*4)));
   }
-  // Calcul des tailles de vagues (répartition équilibrée)
+  // Calcul des tailles de vagues (répartition équilibrée, max T*4 par vague)
   const waveSizes=[];{let rem2=activeN;for(let w=0;w<wavesPerRound;w++){const sz=Math.min(T*4,Math.round(rem2/(wavesPerRound-w)/4)*4||4);waveSizes.push(Math.max(4,sz));rem2-=sz;}}
   let bestSched=null,bestScore=Infinity;
 
@@ -1242,11 +1258,11 @@ function buildSchedule(maxAttempts=16){
         waves.push({matches:ms,waveIdx:w,waveTime:'',_isEarlyWave:false});
       }
 
-      // ── Matchs anticipés (terrains libres)
+      // ── Matchs anticipés (terrains libres) — désactivés si vagues forcées
       // Règle absolue : un joueur qui joue un match anticipé pour le tour R+1
       //   1. N'a PAS joué de match normal dans aucune vague du tour courant R
       //   2. Ne jouera PAS de match normal au tour R+1 (son anticipé EST son match)
-      if(r+1<R){
+      if(!forcedWaves && r+1<R){
         // Tous les joueurs ayant joué dans n'importe quelle vague normale de ce tour
         const alreadyPlayedThisRound=new Set(
           waves.filter(wv=>!wv._isEarlyWave)
@@ -2314,12 +2330,14 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
         <div>
           <label>🌊 Vagues par tour</label>
           <select id="cfg_waves" onchange="onCfgChange()">
-            <option value="0" selected>Auto (calculé)</option>
-            <option value="1">1 vague</option>
-            <option value="2">2 vagues</option>
-            <option value="3">3 vagues</option>
-            <option value="4">4 vagues</option>
+            <option value="0" selected>🤖 Auto (calculé)</option>
+            <option value="1">1 vague fixe</option>
+            <option value="2">2 vagues fixes</option>
+            <option value="3">3 vagues fixes</option>
+            <option value="4">4 vagues fixes</option>
+            <option value="5">5 vagues fixes</option>
           </select>
+          <div id="wavesHint" style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5"></div>
         </div>
       </div>
     </div>
