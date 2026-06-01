@@ -1110,10 +1110,10 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
   const strictGender=(bal==='gender'||bal==='both');
   const strictLevel=(bal==='level'||bal==='both');
 
-  for(let relaxMode=0;relaxMode<=3;relaxMode++){
+  for(let relaxMode=0;relaxMode<=4;relaxMode++){
     const enforceGender=strictGender&&relaxMode<3;
     let bestMatches=null,bestScore=Infinity;
-    const maxAttempts=relaxMode===0?30:15;
+    const maxAttempts=relaxMode===0?30:relaxMode<=2?15:8;
 
     for(let attempt=0;attempt<maxAttempts;attempt++){
       // Trier le groupe selon mixité+niveau avant de l'explorer
@@ -1154,8 +1154,13 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
                 if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
                 else{const opps=[[a1,b1],[a1,b2],[a2,b1],[a2,b2]];for(const[x,y]of opps)if((oppCount[pk(x,y)]||0)>=1){valid=false;break;}}
               }
-              else if(relaxMode>=2){
+              else if(relaxMode===2||relaxMode===3){
+                // Autorise doublons adversaires mais pas doublons partenaires
                 if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
+              }
+              else if(relaxMode>=4){
+                // Mode tout relâché : aucune contrainte de rotation
+                valid=true;
               }
               // Mixité obligatoire si possible
               if(valid&&enforceGender) valid=isMixForced(a1,a2,b1,b2);
@@ -1183,6 +1188,24 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
       return bestMatches;
     }
   }
+  // Fallback absolu : forcer les matchs sans aucune contrainte
+  const used2=new Set();const matches2=[];
+  const grp2=[...group];
+  while(grp2.filter(id=>!used2.has(id)).length>=4){
+    const avail=grp2.filter(id=>!used2.has(id));
+    const m={pA1:avail[0],pA2:avail[1],pB1:avail[2],pB2:avail[3],_relaxed:4};
+    matches2.push(m);
+    [avail[0],avail[1],avail[2],avail[3]].forEach(id=>used2.add(id));
+  }
+  if(matches2.length>0){
+    matches2.forEach(m=>{
+      const kp1=pk(m.pA1,m.pA2),kp2=pk(m.pB1,m.pB2);
+      pairCount[kp1]=(pairCount[kp1]||0)+1;pairCount[kp2]=(pairCount[kp2]||0)+1;
+      lastPartnerRound[kp1]=currentRound;lastPartnerRound[kp2]=currentRound;
+      [m.pA1,m.pA2].forEach(a=>[m.pB1,m.pB2].forEach(b=>{const ko=pk(a,b);oppCount[ko]=(oppCount[ko]||0)+1;}));
+    });
+    return matches2;
+  }
   return[];
 }
 
@@ -1201,7 +1224,7 @@ function sortForSubs(ids,playCount,byeCount){
   });
 }
 
-function buildSchedule(maxAttempts=16){
+function buildSchedule(maxAttempts=24){
   const cfg=getCfg();if(cfg.n<4){alert('Il faut au moins 4 joueurs.');return false;}
   ST.cfg=cfg;
   const N=cfg.n,T=cfg.t,R=cfg.r;
