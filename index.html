@@ -18,7 +18,7 @@ import { initializeApp }            from 'https://www.gstatic.com/firebasejs/10.
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider,
          signOut, updateProfile }   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection,
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, collection,
          addDoc, updateDoc, serverTimestamp, query, orderBy }
                                     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -172,9 +172,15 @@ function subscribeToTournamentPublic(){
     if(ST.schedule.length>0 && ST.page<4) goTo(4);
   });
 }
+function normalizeResult(data){
+  return { ga: data.ga==null?'':data.ga, gb: data.gb==null?'':data.gb };
+}
 function subscribeToResultsPublic(){
   unsubResults = onSnapshot(collection(db,'results'), (snap)=>{
-    snap.forEach(d=>{ ST.results[d.id]=d.data(); });
+    snap.docChanges().forEach(change=>{
+      if(change.type==='removed') delete ST.results[change.doc.id];
+      else ST.results[change.doc.id]=normalizeResult(change.doc.data());
+    });
     if(ST.page===4){ renderMatches(); renderMiniStandings(); checkDone(); }
     if(ST.page===5) renderFinal();
   });
@@ -335,8 +341,7 @@ window.adminDeleteUser = async function(uid, name){
   if(!isAdmin()){ alert('Admin uniquement.'); return; }
   if(!confirm(`Supprimer l'utilisateur "${name}" ?\nCette action est irréversible.`)) return;
   try {
-    const { deleteDoc, doc: doc2 } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-    await deleteDoc(doc2(db,'users',uid));
+    await deleteDoc(doc(db,'users',uid));
     await auditLog('admin_delete_user',{ uid, name });
     // Supprimer aussi via la REST API Firebase Auth (nécessite un token admin — si indispo, on supprime juste Firestore)
     const msg = document.getElementById('userListMsg');
@@ -387,7 +392,10 @@ function subscribeToTournament(){
 }
 function subscribeToResults(){
   unsubResults = onSnapshot(collection(db,'results'), (snap)=>{
-    snap.forEach(d=>{ ST.results[d.id]=d.data(); });
+    snap.docChanges().forEach(change=>{
+      if(change.type==='removed') delete ST.results[change.doc.id];
+      else ST.results[change.doc.id]=normalizeResult(change.doc.data());
+    });
     if(ST.page===4){ renderMatches(); renderMiniStandings(); checkDone(); }
     if(ST.page===5) renderFinal();
   });
@@ -408,10 +416,19 @@ async function saveTournament(fields){
 async function saveResult(key, ga, gb){
   if(!isScorer()){ alert('Action réservée aux scorers et admins.'); return; }
   try {
-    await setDoc(doc(db,'results',key),{
-      ga, gb, savedAt: serverTimestamp(), savedBy: CURRENT_USER.uid
-    });
-    await auditLog('save_result',{ key, ga, gb });
+    if(ga===''&&gb===''){
+      // Les deux champs vidés → supprimer le document (annulation complète du score)
+      await deleteDoc(doc(db,'results',key));
+      await auditLog('delete_result',{ key });
+    } else {
+      await setDoc(doc(db,'results',key),{
+        ga: ga===''?null:ga,
+        gb: gb===''?null:gb,
+        savedAt: serverTimestamp(),
+        savedBy: CURRENT_USER.uid
+      });
+      await auditLog('save_result',{ key, ga, gb });
+    }
   } catch(e){ alert('Erreur sauvegarde score : '+e.message); }
 }
 
@@ -430,27 +447,54 @@ async function auditLog(action, details){
 // MODIFICATION NOM JOUEUR (scorer + admin)
 // ══════════════════════════════════════════════════════════
 window.editPlayerName = async function(idx){
-  if(!isScorer()){ return; }
+  if(!isScorer()) return;
   const p = ST.players[idx];
   if(!p) return;
-  const newName = prompt('Nouveau nom pour ' + p.name + ' :', p.name);
-  if(!newName || newName.trim()==='' || newName.trim()===p.name) return;
-  ST.players[idx].name = newName.trim();
-  // Admin sauvegarde via tournament, scorer via un doc dédié
-  if(isAdmin()){
-    await saveTournament({ players: ST.players });
-  } else {
-    // Scorer : écriture dans playerEdits, l'admin voit les changements en temps réel
-    try {
-      await setDoc(doc(db,'tournament','current'),{
-        players: ST.players, updatedAt: serverTimestamp()
-      },{ merge:true });
-      await auditLog('edit_player_name',{ idx, oldName: p.name, newName: newName.trim() });
-    } catch(e){ alert('Erreur : '+e.message); }
+  // Trouver le span du nom dans le DOM et le remplacer par un input inline
+  const spans = document.querySelectorAll(`[data-playeridx="${idx}"]`);
+  const target = spans[0];
+  if(!target) {
+    // Fallback si pas de data-playeridx trouvé
+    const newName = prompt('Nouveau nom :', p.name);
+    if(!newName || !newName.trim() || newName.trim()===p.name) return;
+    await _savePlayerName(idx, newName.trim());
+    return;
   }
+  const oldName = p.name;
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = oldName;
+  inp.className = 'name-edit-inp';
+  inp.maxLength = 40;
+  inp.style.cssText = 'font-size:inherit;font-weight:inherit;font-family:inherit;background:var(--s1);border:2px solid var(--blu);border-radius:6px;color:var(--ink);padding:2px 6px;width:140px;outline:none';
+  target.replaceWith(inp);
+  inp.focus(); inp.select();
+  const commit = async () => {
+    const newName = inp.value.trim();
+    // Restaurer le span dans tous les cas
+    const span = document.createElement('span');
+    span.dataset.playeridx = idx;
+    span.textContent = newName || oldName;
+    inp.replaceWith(span);
+    if(newName && newName !== oldName) await _savePlayerName(idx, newName);
+  };
+  inp.addEventListener('blur', commit);
+  inp.addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); }
+    if(e.key === 'Escape'){ inp.value = oldName; inp.blur(); }
+  });
+};
+async function _savePlayerName(idx, newName){
+  ST.players[idx].name = newName;
+  try {
+    await setDoc(doc(db,'tournament','current'),{
+      players: ST.players, updatedAt: serverTimestamp()
+    },{ merge:true });
+    await auditLog('edit_player_name',{ idx, newName });
+  } catch(e){ alert('Erreur : '+e.message); }
   renderPlayers();
   if(ST.page===4) renderMatches();
-};
+}
 
 // ══════════════════════════════════════════════════════════
 // NAVIGATION
@@ -597,9 +641,84 @@ window.setRes = async function(r,w,m,f,v){
   const cur=ST.results[key]||{ga:'',gb:''};
   cur[f]=v===''?'':+v;
   ST.results[key]=cur;
-  if(cur.ga!==''&&cur.gb!=='') await saveResult(key, cur.ga, cur.gb);
+  await saveResult(key, cur.ga!=null?cur.ga:'', cur.gb!=null?cur.gb:'');
   renderRoundTabs(); renderMatches(); renderMiniStandings(); checkDone();
 };
+
+// ── Scores : mise à jour mémoire uniquement (pas de re-render) ──
+window.scoreInput = function(el, r, w, m, f){
+  const raw = el.value.replace(/[^0-9]/g,'');
+  el.value = raw; // nettoie les caractères non numériques
+  const v = raw === '' ? '' : parseInt(raw, 10);
+  const key = r+'-'+w+'-'+m;
+  const cur = Object.assign({ga:'',gb:''}, ST.results[key]||{});
+  if(cur.ga==null) cur.ga=''; if(cur.gb==null) cur.gb='';
+  cur[f] = v;
+  ST.results[key] = cur;
+  // Mise à jour visuelle légère sans re-render (couleur gagnant)
+  const other = f==='ga' ? cur.gb : cur.ga;
+  if(v!=='' && other!==''){
+    el.classList.toggle('win-s', v > other);
+    // Met à jour l'autre champ aussi si visible
+    const matchInputs = [...document.querySelectorAll(`.sinp[data-match="${r}-${w}-${m}"]`)];
+    const otherEl = matchInputs.find(x => x.dataset.field !== f);
+    if(otherEl) otherEl.classList.toggle('win-s', other > v);
+  } else {
+    el.classList.remove('win-s');
+  }
+  // Sauvegarde + re-render différés — annule si on retape dans les 800ms
+  clearTimeout(el._saveTimer);
+  el._saveTimer = setTimeout(() => scoreFlush(r, w, m), 800);
+};
+
+// ── Sauvegarde + re-render (appelé après pause de frappe ou Enter) ──
+window.scoreFlush = async function(r, w, m){
+  const key = r+'-'+w+'-'+m;
+  const cur = ST.results[key]||{ga:'',gb:''};
+  if(cur.ga==null) cur.ga=''; if(cur.gb==null) cur.gb='';
+  // Annule les timers en cours sur les inputs de ce match avant de re-render
+  document.querySelectorAll(`.sinp[data-match="${r}-${w}-${m}"]`).forEach(el=>{
+    clearTimeout(el._saveTimer);
+  });
+  await saveResult(key, cur.ga, cur.gb);
+  renderRoundTabs(); renderMatches(); renderMiniStandings(); checkDone();
+};
+
+// ── Navigation : Enter sauvegarde immédiatement et passe au suivant ──
+window.scoreNav = function(e, el){
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    clearTimeout(el._saveTimer);
+    const r=+el.dataset.rid, w=+el.dataset.wi, m=+el.dataset.mi, f=el.dataset.field;
+    scoreFlush(r, w, m).then(()=>{
+      // Après re-render, focus sur le prochain input
+      const all = [...document.querySelectorAll('.sinp:not([readonly])')];
+      if(all.length > 0) all[0].focus();
+    });
+  }
+  if(e.key === 'Tab'){
+    e.preventDefault();
+    // Tab : passe au champ suivant SANS sauvegarder encore
+    const all = [...document.querySelectorAll('.sinp:not([readonly])')];
+    const next = all[all.indexOf(el)+1];
+    if(next){ next.focus(); next.select(); }
+    else {
+      clearTimeout(el._saveTimer);
+      scoreFlush(+el.dataset.rid, +el.dataset.wi, +el.dataset.mi);
+    }
+  }
+  if(e.key === 'Escape'){
+    clearTimeout(el._saveTimer);
+    // Remet la valeur sauvegardée
+    const key = el.dataset.rid+'-'+el.dataset.wi+'-'+el.dataset.mi;
+    const cur = ST.results[key]||{};
+    el.value = cur[el.dataset.field]!=null ? cur[el.dataset.field] : '';
+    el.blur();
+  }
+};
+
+// ── scoreCommit gardé pour compatibilité (appelé nulle part mais au cas où) ──
+window.scoreCommit = function(el,r,w,m,f){ scoreFlush(r,w,m); };
 
 window.setRound = async function(r){
   ST.activeRound=r;
@@ -1189,7 +1308,7 @@ function renderSubInfo(){
 
 function renderMatches(){
   const round=ST.schedule[ST.activeRound];const el=document.getElementById('mList');if(!round||!el)return;
-  const mkP=(id)=>{const p=pObj(id);return p?p.name:'?';};
+  const mkP=(id)=>{const p=pObj(id);const idx=ST.players.findIndex(x=>x.id===id);return p?`<span data-playeridx="${idx}">${p.name}</span>`:'?';};
   // Bouton substitution uniquement pour admin
   const mkSubBtn=(id)=>isAdmin()?`<button class="psub-btn" title="Remplacer ce joueur" onclick="openSub('${id}')">↔</button>`:'';
   // Bouton édition nom visible pour scorer+admin (en mode tournoi)
@@ -1219,13 +1338,25 @@ function renderMatches(){
           <div class="mt-nm">${mkP(m.pA1)} <span style="color:var(--grn);font-size:13px">+</span> ${mkP(m.pA2)}</div>
           <div class="mt-detail">${mkSubBtn(m.pA1)} ${mkEditBtn(m.pA1,idxA1)} ${mkP(m.pA1)} &nbsp;·&nbsp; ${mkSubBtn(m.pA2)} ${mkEditBtn(m.pA2,idxA2)} ${mkP(m.pA2)}</div>
         </div>
-        <input type="number" min="0" class="sinp ${aW?'win-s':''}" value="${res.ga}" placeholder="–"
-          ${isScorer()?`oninput="setRes(${ST.activeRound},${wi},${mi},'ga',this.value)"`:' readonly'}
-          style="${!isScorer()?'cursor:default;background:var(--s2)':''}">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2"
+          class="sinp ${aW?'win-s':''}" value="${res.ga!==''?res.ga:''}" placeholder="–"
+          ${isScorer()?`
+            onfocus="this.select()"
+            oninput="scoreInput(this,${ST.activeRound},${wi},${mi},'ga')"
+            onkeydown="scoreNav(event,this)"
+          `:'readonly'}
+          style="${!isScorer()?'cursor:default;opacity:.6':''}"
+          data-rid="${ST.activeRound}" data-wi="${wi}" data-mi="${mi}" data-field="ga" data-match="${ST.activeRound}-${wi}-${mi}">
         <div class="vs-lbl">VS</div>
-        <input type="number" min="0" class="sinp ${bW?'win-s':''}" value="${res.gb}" placeholder="–"
-          ${isScorer()?`oninput="setRes(${ST.activeRound},${wi},${mi},'gb',this.value)"`:' readonly'}
-          style="${!isScorer()?'cursor:default;background:var(--s2)':''}">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2"
+          class="sinp ${bW?'win-s':''}" value="${res.gb!==''?res.gb:''}" placeholder="–"
+          ${isScorer()?`
+            onfocus="this.select()"
+            oninput="scoreInput(this,${ST.activeRound},${wi},${mi},'gb')"
+            onkeydown="scoreNav(event,this)"
+          `:'readonly'}
+          style="${!isScorer()?'cursor:default;opacity:.6':''}"
+          data-rid="${ST.activeRound}" data-wi="${wi}" data-mi="${mi}" data-field="gb" data-match="${ST.activeRound}-${wi}-${mi}">
         <div class="mt-r">
           <div class="mt-court">TERRAIN ${mi+1}</div>
           <div class="mt-nm">${mkP(m.pB1)} <span style="color:var(--grn);font-size:13px">+</span> ${mkP(m.pB2)}</div>
@@ -1537,8 +1668,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--grn)}
 .mt-nm{font-family:'Oswald',sans-serif;font-size:16px;letter-spacing:.5px;color:var(--ink2)}
 .mt-detail{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5}
 .mt-r{text-align:right}
-.sinp{width:50px;height:44px;text-align:center;font-family:'Oswald',sans-serif;font-weight:700;font-size:22px;background:var(--s1);border:2px solid var(--bdr);border-radius:8px;color:var(--ink);outline:none;transition:border-color .15s}
-.sinp:focus{border-color:var(--blu)}.sinp.win-s{border-color:var(--grn);color:var(--grn);background:var(--grn-bg)}
+/* SCORE INPUT */
+.sinp{width:62px;height:52px;text-align:center;font-family:'Oswald',sans-serif;font-weight:700;font-size:26px;background:var(--s1);border:2px solid var(--bdr);border-radius:10px;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;padding:0;-webkit-user-select:text;user-select:text}
+.sinp:focus{border-color:var(--blu);box-shadow:0 0 0 3px rgba(80,140,255,.18)}
+.sinp.win-s{border-color:var(--grn);color:var(--grn);background:var(--grn-bg)}
+.sinp::placeholder{color:var(--dim);font-size:20px}
 .vs-lbl{text-align:center;font-size:11px;font-weight:700;color:var(--dim)}
 
 /* TIMER */
@@ -1657,7 +1791,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   .mc > .mt-r { text-align: center; }
   .mc .vs-lbl { display: none; }
   .mc::before { content: 'VS'; display: block; text-align: center; font-size: 11px; font-weight: 700; color: var(--dim); order: 2; }
-  .sinp { width: 52px; height: 44px; font-size: 20px; }
+  .sinp { width: 58px; height: 50px; font-size: 24px; }
 
   /* Score au centre */
   .mc-score-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -1742,7 +1876,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
     gap: 6px;
     padding: 11px 12px;
   }
-  .sinp { width: 46px; height: 42px; font-size: 20px; }
+  .sinp { width: 56px; height: 48px; font-size: 23px; }
 
   .timer-big { font-size: 56px; }
   .timer-wrap { flex-direction: column; align-items: center; text-align: center; }
@@ -1810,7 +1944,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   .card{box-shadow:none!important;border:1px solid #ccc!important;break-inside:avoid}
   .stbl{font-size:10px}.stbl th,.stbl td{padding:5px 4px}
   .mc{border:1px solid #ccc!important;background:#fff!important;box-shadow:none!important;break-inside:avoid}
-  .sinp{border:1px solid #999!important;background:#fff!important}
+  .sinp{border:1px solid #999!important;color:#000!important}
   .round-block{break-inside:avoid;border:1px solid #ccc!important}
   .no-print{display:none!important}.print-only{display:block!important}.modal-bg{display:none!important}
 }
