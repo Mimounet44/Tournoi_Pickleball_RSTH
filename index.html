@@ -1140,33 +1140,38 @@ function makeMatchesStrict(group,pairCount,oppCount,lastPartnerRound,currentRoun
       while(true){
         const avail=sorted.filter(id=>!used.has(id));
         if(avail.length<4)break;
-        const a1=avail[0];let bestM=null,bestMSc=Infinity;
+        let bestM=null,bestMSc=Infinity;
 
-        for(let i=1;i<avail.length;i++){
-          const a2=avail[i];
-          for(let j=1;j<avail.length;j++){
-            if(j===i)continue;const b1=avail[j];
-            for(let k=j+1;k<avail.length;k++){
-              if(k===i)continue;const b2=avail[k];
-              let valid=true;
-              if(relaxMode===0) valid=isMatchValid(a1,a2,b1,b2,pairCount,oppCount,lastPartnerRound,currentRound);
-              else if(relaxMode===1){
-                if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
-                else{const opps=[[a1,b1],[a1,b2],[a2,b1],[a2,b2]];for(const[x,y]of opps)if((oppCount[pk(x,y)]||0)>=1){valid=false;break;}}
+        // Essayer chaque joueur disponible comme ancre a1 (pas seulement avail[0])
+        // Évite l'échec greedy quand le premier joueur est bloquant
+        for(let a1idx=0;a1idx<avail.length&&!bestM;a1idx++){
+          const a1=avail[a1idx];
+          for(let i=0;i<avail.length;i++){
+            if(i===a1idx)continue;const a2=avail[i];
+            for(let j=0;j<avail.length;j++){
+              if(j===a1idx||j===i)continue;const b1=avail[j];
+              for(let k=j+1;k<avail.length;k++){
+                if(k===a1idx||k===i)continue;const b2=avail[k];
+                let valid=true;
+                if(relaxMode===0) valid=isMatchValid(a1,a2,b1,b2,pairCount,oppCount,lastPartnerRound,currentRound);
+                else if(relaxMode===1){
+                  if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
+                  else{const opps=[[a1,b1],[a1,b2],[a2,b1],[a2,b2]];for(const[x,y]of opps)if((oppCount[pk(x,y)]||0)>=1){valid=false;break;}}
+                }
+                else if(relaxMode===2||relaxMode===3){
+                  // Autorise doublons adversaires mais pas doublons partenaires
+                  if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
+                }
+                else if(relaxMode>=4){
+                  // Mode tout relâché : aucune contrainte de rotation
+                  valid=true;
+                }
+                // Mixité obligatoire si possible
+                if(valid&&enforceGender) valid=isMixForced(a1,a2,b1,b2);
+                if(!valid)continue;
+                const msc=matchScore(a1,a2,b1,b2,bal);
+                if(msc<bestMSc){bestMSc=msc;bestM={pA1:a1,pA2:a2,pB1:b1,pB2:b2};}
               }
-              else if(relaxMode===2||relaxMode===3){
-                // Autorise doublons adversaires mais pas doublons partenaires
-                if((pairCount[pk(a1,a2)]||0)>=1||(pairCount[pk(b1,b2)]||0)>=1)valid=false;
-              }
-              else if(relaxMode>=4){
-                // Mode tout relâché : aucune contrainte de rotation
-                valid=true;
-              }
-              // Mixité obligatoire si possible
-              if(valid&&enforceGender) valid=isMixForced(a1,a2,b1,b2);
-              if(!valid)continue;
-              const msc=matchScore(a1,a2,b1,b2,bal);
-              if(msc<bestMSc){bestMSc=msc;bestM={pA1:a1,pA2:a2,pB1:b1,pB2:b2};}
             }
           }
         }
