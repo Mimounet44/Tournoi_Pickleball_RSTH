@@ -519,6 +519,7 @@ window.goTo = function(n){
   ST.page=n;
   // Bouton retour : uniquement pour admin (scorers/spectateurs n'ont pas de workflow linéaire)
   document.getElementById('backBtn').style.display=(isAdmin()&&n>1)?'':'none';
+  updateFwdBtn();
   updateSteps(n);
   window.scrollTo(0,0);
   if(n===3) renderGen();
@@ -530,6 +531,35 @@ window.goTo = function(n){
 window.goBack = function(){
   if(ST.rulesOpen){toggleRules();return;}
   if(isAdmin() && ST.page>1) goTo(ST.page-1);
+};
+
+// ─── Navigation vers la page suivante (si déjà générée) ───
+function canGoFwd(){
+  if(!isAdmin()) return false;
+  if(ST.rulesOpen) return false;
+  if(ST.page===1) return ST.players.length >= ST.cfg.n;
+  if(ST.page===2) return ST.players.length >= ST.cfg.n;
+  if(ST.page===3) return ST.schedule.length > 0;
+  if(ST.page===4) return true; // classement toujours accessible
+  return false;
+}
+function updateFwdBtn(){
+  const show = canGoFwd();
+  const btn = document.getElementById('fwdBtn');
+  if(btn) btn.style.display = show ? '' : 'none';
+  if(typeof syncDrawerButtons === 'function') syncDrawerButtons();
+}
+window.goFwd = function(){
+  if(!canGoFwd()) return;
+  if(ST.page===1){
+    if(ST.players.length >= ST.cfg.n) goTo(2);
+  } else if(ST.page===2){
+    goTo(3);
+  } else if(ST.page===3){
+    goTo(4);
+  } else if(ST.page===4){
+    goTo(5);
+  }
 };
 function updateSpectatorNav(n){
   // Mettre en surbrillance le bouton actif dans la nav spectateur
@@ -553,6 +583,7 @@ window.toggleRules = function(){
   document.getElementById(backPage).classList.add('active');
   document.getElementById('ruleBtn').textContent=ST.rulesOpen?'× Fermer':'📋 Règlement';
   document.getElementById('backBtn').style.display=(ST.rulesOpen||ST.page>1)&&isAdmin()?'':'none';
+  updateFwdBtn();
   if(!ST.rulesOpen) updateSpectatorNav(isAdmin()?ST.page:4);
 };
 
@@ -560,6 +591,7 @@ window.toggleRules = function(){
 // PAGE 1 — CONFIG (admin uniquement)
 // ══════════════════════════════════════════════════════════
 function getCfg(){
+  const wavesEl=document.getElementById('cfg_waves');
   return {
     n:+document.getElementById('cfg_n').value,
     t:+document.getElementById('cfg_t').value,
@@ -568,7 +600,8 @@ function getCfg(){
     tt:+document.getElementById('cfg_tt').value,
     tp:+document.getElementById('cfg_tp').value,
     bal:document.getElementById('cfg_bal').value,
-    start:document.getElementById('cfg_start').value||'09:00'
+    start:document.getElementById('cfg_start').value||'09:00',
+    waves:wavesEl?+wavesEl.value:0  // 0 = auto
   };
 }
 function syncCfgForm(){
@@ -578,6 +611,7 @@ function syncCfgForm(){
   });
   const elBal=document.getElementById('cfg_bal'); if(elBal) elBal.value=c.bal;
   const elSt=document.getElementById('cfg_start'); if(elSt) elSt.value=c.start;
+  const elW=document.getElementById('cfg_waves'); if(elW) elW.value=c.waves||0;
   onCfgChange();
 }
 
@@ -828,9 +862,22 @@ function addMinutes(timeStr,mins){
 // ══════════════════════════════════════════════════════════
 function computeScheduleParams(c){
   const N=c.n,T=c.t,R=c.r;
-  const simultaneous=T*4, rem=N%4, activeN=N-rem;
-  const wavesPerRound=Math.max(1,Math.ceil(activeN/simultaneous));
-  const baseWaveSize=Math.floor(activeN/wavesPerRound);
+  const simultaneous=T*4;
+  // Si vagues forcées, calcul des remplaçants en fonction
+  let wavesPerRound, activeN, rem;
+  if(c.waves && c.waves > 0){
+    wavesPerRound = c.waves;
+    // Nombre de joueurs actifs = wavesPerRound * T * 4, mais pas plus que N
+    const maxActive = wavesPerRound * T * 4;
+    activeN = Math.min(N, maxActive);
+    // Si maxActive > N, on ne peut pas remplir toutes les vagues
+    // On ajuste pour ne garder que les vagues qui se remplissent
+    rem = N - activeN;
+  } else {
+    rem=N%4; activeN=N-rem;
+    wavesPerRound=Math.max(1,Math.ceil(activeN/simultaneous));
+  }
+  const baseWaveSize=wavesPerRound>0?Math.floor(activeN/wavesPerRound):0;
   const roundDuration=wavesPerRound*c.mt+(wavesPerRound-1)*c.tt;
   const totalDuration=R*roundDuration+(R-1)*c.tp;
   return {N,T,R,rem,activeN,wavesPerRound,baseWaveSize,simultaneous,roundDuration,totalDuration};
@@ -842,21 +889,35 @@ window.onCfgChange = function(){
   else {
     const endTime=addMinutes(c.start,p.totalDuration);
     msg=`<strong>${p.N} joueurs</strong> · <strong>${c.t} terrains</strong> · <strong>${c.r} tours (matchs/joueur)</strong><br>`;
-    msg+=`Vagues par tour : <strong>${p.wavesPerRound}</strong> × ${p.baseWaveSize} joueurs simultanés`;
-    if(p.rem>0) msg+=` + <strong>${p.rem} remplaçant${p.rem>1?'s':''}</strong>`;
-    msg+='<br>';
-    if(p.rem===0&&p.wavesPerRound===1&&c.n>=c.t*4)
-      msg+=`✅ Tous les joueurs jouent à chaque tour · Terrains toujours remplis<br>`;
-    else if(p.rem===0)
-      msg+=`✅ Tous les joueurs jouent à chaque tour · Terrains libres comblés par matchs anticipés<br>`;
-    else
-      msg+=`⚠️ ${p.rem} joueur${p.rem>1?'s':''}/tour au repos — terrains libres comblés par matchs anticipés<br>`;
+    // Vagues
+    if(c.waves && c.waves > 0){
+      const playersPerWave = c.t * 4;
+      const totalActive = Math.min(c.n, c.waves * playersPerWave);
+      const subs = c.n - totalActive;
+      msg+=`Vagues par tour : <strong>${p.wavesPerRound}</strong> (forcé) × ${playersPerWave} joueurs simultanés`;
+      if(subs > 0) msg+=` · <strong style="color:#e87040">${subs} remplaçant${subs>1?'s':''}/tour</strong>`;
+      else msg+=` · <strong style="color:var(--grn)">Tous jouent</strong>`;
+      msg+='<br>';
+      if(subs > 0)
+        msg+=`⚠️ Avec ${c.waves} vague${c.waves>1?'s':''} × ${c.t} terrains = ${totalActive} joueurs actifs sur ${c.n} → <strong>${subs} en attente</strong><br>`;
+    } else {
+      msg+=`Vagues par tour : <strong>${p.wavesPerRound}</strong> × ${p.baseWaveSize} joueurs simultanés`;
+      if(p.rem>0) msg+=` + <strong>${p.rem} remplaçant${p.rem>1?'s':''}</strong>`;
+      msg+='<br>';
+      if(p.rem===0&&p.wavesPerRound===1&&c.n>=c.t*4)
+        msg+=`✅ Tous les joueurs jouent à chaque tour · Terrains toujours remplis<br>`;
+      else if(p.rem===0)
+        msg+=`✅ Tous les joueurs jouent à chaque tour · Terrains libres comblés par matchs anticipés<br>`;
+      else
+        msg+=`⚠️ ${p.rem} joueur${p.rem>1?'s':''}/tour au repos — terrains libres comblés par matchs anticipés<br>`;
+    }
     msg+=`Durée estimée : <strong>~${p.totalDuration} min</strong> · Fin vers <strong>${endTime}</strong>`;
     if(p.wavesPerRound>1)
       msg+=`<br>📋 Structure : ${c.r} tours de ${p.wavesPerRound} vagues × ${c.mt}min (+${c.tt}min transition)`;
   }
   document.getElementById('cfgBox').className='info '+cls;
   document.getElementById('cfgBox').innerHTML=icon+' '+msg;
+  updateFwdBtn();
 };
 
 // ══════════════════════════════════════════════════════════
@@ -873,8 +934,7 @@ function renderPlayers(){
   el.style.color=n>=req?'var(--grn)':n>0?'var(--ylw)':'var(--muted)';
   const pp=document.getElementById('pProg'); if(pp) pp.style.width=pct+'%';
   const bg=document.getElementById('btnGo3'); if(bg) bg.disabled=n<req;
-  const list=document.getElementById('pList'); if(!list) return;
-  if(!n){ list.innerHTML='<div class="txt-muted" style="padding:10px 0">Aucun joueur.</div>'; return; }
+  const list=document.getElementById('pList'); if(!list) return;  if(!n){ list.innerHTML='<div class="txt-muted" style="padding:10px 0">Aucun joueur.</div>'; return; }
   // Bouton crayon visible pour scorer+admin, croix uniquement admin
   list.innerHTML=ST.players.map((p,i)=>`
     <div class="prow">
@@ -886,6 +946,7 @@ function renderPlayers(){
       ${isScorer()?`<button class="pedit" title="Modifier le nom" onclick="editPlayerName(${i})">✏️</button>`:''}
       ${isAdmin()?`<button class="pdel" onclick="delPlayer(${i})">×</button>`:''}
     </div>`).join('');
+  updateFwdBtn();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1111,8 +1172,18 @@ function sortForSubs(ids,playCount,byeCount){
 function buildSchedule(maxAttempts=16){
   const cfg=getCfg();if(cfg.n<4){alert('Il faut au moins 4 joueurs.');return false;}
   ST.cfg=cfg;
-  const N=cfg.n,T=cfg.t,R=cfg.r,rem=N%4,activeN=N-rem;
-  const wavesPerRound=Math.max(1,Math.ceil(activeN/(T*4)));
+  const N=cfg.n,T=cfg.t,R=cfg.r;
+  // Vagues : forcées ou automatiques
+  let wavesPerRound, activeN, rem;
+  if(cfg.waves && cfg.waves > 0){
+    wavesPerRound = cfg.waves;
+    const maxActive = wavesPerRound * T * 4;
+    activeN = Math.min(N, maxActive);
+    rem = N - activeN;
+  } else {
+    rem=N%4; activeN=N-rem;
+    wavesPerRound=Math.max(1,Math.ceil(activeN/(T*4)));
+  }
   // Calcul des tailles de vagues (répartition équilibrée)
   const waveSizes=[];{let rem2=activeN;for(let w=0;w<wavesPerRound;w++){const sz=Math.min(T*4,Math.round(rem2/(wavesPerRound-w)/4)*4||4);waveSizes.push(Math.max(4,sz));rem2-=sz;}}
   let bestSched=null,bestScore=Infinity;
@@ -2057,6 +2128,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
     <button class="hdr-btn" id="liveBtn" data-role="scorer" onclick="goToLive()" style="display:none">📺 Live</button>
     <button class="hdr-btn" id="adminBtn" data-role="admin" onclick="toggleAdminPanel()" style="display:none">👑 Admin</button>
     <button class="hdr-btn" id="backBtn" style="display:none" onclick="goBack()">← Retour</button>
+    <button class="hdr-btn" id="fwdBtn" style="display:none" onclick="goFwd()">Suivant →</button>
     <button class="hdr-btn" id="logoutBtn" onclick="logout()">Quitter</button>
   </div>
 
@@ -2075,6 +2147,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <button class="hdr-drawer-btn" id="drawerLiveBtn" data-role="scorer" onclick="closeMobileMenu();goToLive()" style="display:none">📺 Live</button>
   <button class="hdr-drawer-btn" id="drawerAdminBtn" data-role="admin" onclick="closeMobileMenu();toggleAdminPanel()" style="display:none">👑 Admin</button>
   <button class="hdr-drawer-btn" id="drawerBackBtn" style="display:none" onclick="closeMobileMenu();goBack()">← Retour</button>
+  <button class="hdr-drawer-btn" id="drawerFwdBtn" style="display:none" onclick="closeMobileMenu();goFwd()">Suivant →</button>
   <div class="hdr-drawer-sep"></div>
   <button class="hdr-drawer-btn drawer-danger" id="drawerLogoutBtn" onclick="closeMobileMenu();logout()">⏻ Quitter</button>
 </div>
@@ -2236,6 +2309,16 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
           <label>Équilibrage des paires</label>
           <select id="cfg_bal">
             <option value="random">Aléatoire</option><option value="level">Par niveau</option><option value="gender">Par sexe</option><option value="both" selected>Niveau + Sexe (recommandé)</option>
+          </select>
+        </div>
+        <div>
+          <label>🌊 Vagues par tour</label>
+          <select id="cfg_waves" onchange="onCfgChange()">
+            <option value="0" selected>Auto (calculé)</option>
+            <option value="1">1 vague</option>
+            <option value="2">2 vagues</option>
+            <option value="3">3 vagues</option>
+            <option value="4">4 vagues</option>
           </select>
         </div>
       </div>
@@ -2611,6 +2694,7 @@ function syncDrawerButtons(){
     ['liveBtn',   'drawerLiveBtn'],
     ['adminBtn',  'drawerAdminBtn'],
     ['backBtn',   'drawerBackBtn'],
+    ['fwdBtn',    'drawerFwdBtn'],
     ['logoutBtn', 'drawerLogoutBtn'],
   ];
   pairs.forEach(([deskId, drawId])=>{
