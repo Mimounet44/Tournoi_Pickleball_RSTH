@@ -514,7 +514,12 @@ window.goTo = function(n){
       return;
     }
   }
-  if(n===3 && ST.schedule.length===0 && !buildSchedule()) return;
+  if(n===3 && ST.schedule.length===0){
+    // Pas de planning en mémoire ni en Firestore : générer une première fois
+    if(!buildSchedule()) return;
+    // Sauvegarder immédiatement pour qu'un retour arrière retrouve le même tirage
+    saveTournament({ schedule: ST.schedule, activeRound: 0 });
+  }
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page'+n).classList.add('active');
   ST.page=n;
@@ -802,8 +807,7 @@ window.regenerate = async function(){
   if(!isAdmin()) return;
   if(buildSchedule()){ await saveTournament({ schedule: ST.schedule, activeRound:0 }); renderGen(); }
 };
-window.newTournament = async function(){
-  if(!isAdmin()){ alert('Admin uniquement.'); return; }
+window.newTournament = async function(){  if(!isAdmin()){ alert('Admin uniquement.'); return; }
   if(!confirm('Nouveau tournoi ? Toutes les données seront perdues.')) return;
   clearInterval(ST.timerIv);
   ST.players=[]; ST.schedule=[]; ST.results={}; ST.activeRound=0;
@@ -811,6 +815,21 @@ window.newTournament = async function(){
   document.getElementById('ruleBtn').textContent='📋 Règlement';
   await saveTournament({ cfg:ST.cfg, players:[], schedule:[], activeRound:0, status:'setup' });
   renderPlayers(); goTo(1); onCfgChange();
+};
+
+// ── Réinitialiser tous les scores (admin uniquement) ──────
+window.resetAllScores = async function(){
+  if(!isAdmin()){ alert('Admin uniquement.'); return; }
+  if(!confirm('Réinitialiser TOUS les scores ?\nLe planning reste intact, seuls les résultats seront effacés.')) return;
+  // Supprimer tous les documents de la collection results
+  try {
+    const { getDocs, collection: col2, deleteDoc: delDoc2, doc: doc2 } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap = await getDocs(col2(db,'results'));
+    await Promise.all(snap.docs.map(d => delDoc2(doc2(db,'results',d.id))));
+    ST.results = {};
+    await auditLog('reset_all_scores', { count: snap.size });
+    renderTournament();
+  } catch(e){ alert('Erreur réinitialisation : '+e.message); }
 };
 
 // ══════════════════════════════════════════════════════════
@@ -1329,7 +1348,12 @@ function buildSchedule(maxAttempts=16){
   ST.schedule=bestSched;ST.results={};ST.activeRound=0;return true;
 }
 
-window.regenerateLocal = function(){ if(buildSchedule()) renderGen(); };
+window.regenerateLocal = async function(){
+  if(buildSchedule()){
+    await saveTournament({ schedule: ST.schedule, activeRound: 0 });
+    renderGen();
+  }
+};
 
 // ══════════════════════════════════════════════════════════
 // PAGE 3 — PLANNING PREVIEW
@@ -2433,6 +2457,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <div class="card mt24">
     <div class="card-ttl">📊 Classement provisoire
       <button class="btn btn-b btn-xs no-print" style="margin-left:auto" onclick="printCurrentRound()">🖨 Imprimer ce tour</button>
+      <button class="btn btn-r btn-xs no-print" data-role="admin" style="display:none;margin-left:6px" onclick="resetAllScores()">🗑 Réinitialiser scores</button>
     </div>
     <div class="ovx"><table class="stbl" id="miniStbl"></table></div>
   </div>
