@@ -759,7 +759,11 @@ window.setRound = async function(r){
 // ══════════════════════════════════════════════════════════
 window.startTournament = async function(){
   if(!isAdmin()) return;
-  if(!buildSchedule()) return;
+  // Utiliser le planning déjà généré (page 3) — ne PAS régénérer aléatoirement
+  if(!ST.schedule || ST.schedule.length === 0){
+    if(!buildSchedule()) return;
+  }
+  ST.results = {}; ST.activeRound = 0;
   await saveTournament({ schedule: ST.schedule, activeRound:0, status:'active', results:{} });
   goTo(4);
 };
