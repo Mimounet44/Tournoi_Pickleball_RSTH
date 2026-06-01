@@ -514,7 +514,7 @@ window.goTo = function(n){
       return;
     }
   }
-  if(n===3 && !buildSchedule()) return;
+  if(n===3 && ST.schedule.length===0 && !buildSchedule()) return;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page'+n).classList.add('active');
   ST.page=n;
