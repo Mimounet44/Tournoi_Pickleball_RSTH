@@ -1629,13 +1629,139 @@ function renderFinal(){
 // TIMER (scorer + admin)
 // ══════════════════════════════════════════════════════════
 function fmt(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+// ══════════════════════════════════════════════════════════
+// 🔊 MOTEUR AUDIO — Web Audio API (desktop + mobile)
+// Pas de fichier externe : tout généré synthétiquement.
+// Sur iOS/Android il faut un geste utilisateur pour débloquer
+// l'AudioContext → on crée le contexte au premier clic sur
+// un bouton du timer, puis on le garde vivant.
+// ══════════════════════════════════════════════════════════
+let _AC = null;          // AudioContext partagé
+let _soundEnabled = true; // l'utilisateur peut couper
+
+function _getAC(){
+  if(!_AC || _AC.state === 'closed'){
+    try { _AC = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ _AC=null; }
+  }
+  if(_AC && _AC.state === 'suspended') _AC.resume();
+  return _AC;
+}
+
+// ─── Utilitaire : jouer une note synthétique ─────────────
+// freq   : fréquence Hz
+// dur    : durée totale en secondes
+// type   : 'sine'|'square'|'sawtooth'
+// attack : ramp montée (s)
+// vol    : volume 0-1
+function _playTone(freq, dur, type='sine', attack=0.01, vol=0.8, startDelay=0){
+  const ac = _getAC(); if(!ac || !_soundEnabled) return;
+  const t = ac.currentTime + startDelay;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(vol, t + attack);
+  gain.gain.setValueAtTime(vol, t + dur - 0.05);
+  gain.gain.linearRampToValueAtTime(0, t + dur);
+  osc.start(t); osc.stop(t + dur);
+}
+
+// ─── Sirène finale (sweep fréquence montant-descendant) ──
+function _playSiren(durationSec = 2.5, vol = 0.9){
+  const ac = _getAC(); if(!ac || !_soundEnabled) return;
+  const t = ac.currentTime;
+  // 3 cycles de montée-descente
+  for(let i=0;i<3;i++){
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    const dist = ac.createWaveShaper();
+    // Saturation légère pour plus de présence
+    const curve = new Float32Array(256);
+    for(let j=0;j<256;j++){ const x=j*2/255-1; curve[j]=x<0?-Math.pow(-x,.7):Math.pow(x,.7); }
+    dist.curve = curve;
+    osc.connect(dist); dist.connect(gain); gain.connect(ac.destination);
+    osc.type = 'sawtooth';
+    const cycDur = durationSec / 3;
+    const start = t + i * cycDur;
+    osc.frequency.setValueAtTime(400, start);
+    osc.frequency.linearRampToValueAtTime(900, start + cycDur * 0.6);
+    osc.frequency.linearRampToValueAtTime(600, start + cycDur);
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(vol, start + 0.03);
+    gain.gain.setValueAtTime(vol, start + cycDur - 0.05);
+    gain.gain.linearRampToValueAtTime(0, start + cycDur);
+    osc.start(start); osc.stop(start + cycDur + 0.01);
+  }
+}
+
+// ─── Signal « 30 secondes restantes » ────────────────────
+// Double bip montant, répété 2 fois, ton jaune/alerte
+function _playWarn30(){
+  if(!_soundEnabled) return;
+  // 2 × double bip espacés de 0.6s
+  for(let rep=0;rep<2;rep++){
+    _playTone(880, 0.12, 'sine', 0.005, 0.75, rep*0.55);
+    _playTone(1100, 0.15, 'sine', 0.005, 0.75, rep*0.55 + 0.18);
+  }
+}
+
+// ─── Bip des 5 dernières secondes (un bip par seconde) ───
+// Bip court grave + aigu pour rythmer le compte à rebours
+function _playCountdownBeep(isLast){
+  if(!_soundEnabled) return;
+  if(isLast){
+    // Dernière seconde → double bip spécial avant sirène
+    _playTone(660, 0.08, 'square', 0.005, 0.8);
+    _playTone(880, 0.10, 'square', 0.005, 0.8, 0.12);
+  } else {
+    _playTone(660, 0.08, 'square', 0.005, 0.65);
+  }
+}
+
+// ─── Bouton mute intégré ─────────────────────────────────
+window.toggleSound = function(){
+  _soundEnabled = !_soundEnabled;
+  const btn = document.getElementById('soundToggle');
+  if(btn) btn.textContent = _soundEnabled ? '🔊' : '🔇';
+  // Débloquer l'AudioContext si pas encore fait
+  _getAC();
+};
+
+// Débloquer l'AudioContext au premier geste (iOS exige un tap)
+function _unlockAudio(){
+  _getAC();
+  // Jouer un silence pour "chauffer" le contexte sur iOS
+  const ac = _AC; if(!ac) return;
+  const buf = ac.createBuffer(1,1,22050);
+  const src = ac.createBufferSource();
+  src.buffer = buf; src.connect(ac.destination);
+  src.start(0);
+}
+
 function updateTimerDisplay(){
   const el=document.getElementById('tmrDsp');if(!el)return;
-  el.textContent=fmt(ST.timerSec);
-  el.className='timer-big '+(ST.timerSec===0?'tc-zero':ST.timerMode==='match'?'tc-match':'tc-trans');
+  const s=ST.timerSec;
+  el.textContent=fmt(s);
+  el.className='timer-big '+(s===0?'tc-zero':ST.timerMode==='match'?'tc-match':'tc-trans');
   document.getElementById('tmrLbl').textContent=ST.timerMode==='match'?`⏱ TEMPS DE JEU — ${ST.cfg.mt} min`:`⏸ TRANSITION — ${ST.timerMode==='trans'?ST.cfg.tt:ST.cfg.tp} min`;
+  // ── Signaux sonores ──────────────────────────────────────
+  if(ST.timerRun){
+    if(s===0){
+      // Fin du temps : sirène
+      _playSiren(2.5, 0.9);
+    } else if(s===30){
+      // 30 secondes restantes : alerte
+      _playWarn30();
+    } else if(s>=1 && s<=5){
+      // Compte à rebours final
+      _playCountdownBeep(s===1);
+    }
+  }
 }
 window.startTimer = function(mode){
+  _unlockAudio();
   clearInterval(ST.timerIv);ST.timerMode=mode;
   const secs=mode==='match'?ST.cfg.mt:mode==='trans'?ST.cfg.tt:ST.cfg.tp;
   ST.timerSec=secs*60;ST.timerRun=true;updateTimerDisplay();
@@ -1644,7 +1770,9 @@ window.startTimer = function(mode){
 };
 window.pauseTimer = function(){clearInterval(ST.timerIv);ST.timerRun=false;document.getElementById('tmrP').style.display='none';document.getElementById('tmrR').style.display='';};
 window.resumeTimer = function(){
+  _unlockAudio();
   document.getElementById('tmrP').style.display='';document.getElementById('tmrR').style.display='none';
+  ST.timerRun=true;
   ST.timerIv=setInterval(()=>{if(ST.timerSec>0){ST.timerSec--;updateTimerDisplay();}else{clearInterval(ST.timerIv);ST.timerRun=false;document.getElementById('tmrP').style.display='none';}},1000);
 };
 
@@ -2469,6 +2597,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
       <button class="btn btn-y btn-sm" onclick="startTimer('trans')">⏸ Transition</button>
       <button class="btn btn-ghost btn-sm" id="tmrP" onclick="pauseTimer()" style="display:none">⏸ Pause</button>
       <button class="btn btn-ghost btn-sm" id="tmrR" onclick="resumeTimer()" style="display:none">▶ Reprendre</button>
+      <button class="btn btn-ghost btn-sm" id="soundToggle" onclick="toggleSound()" title="Activer/couper le son" style="font-size:16px;padding:6px 10px">🔊</button>
     </div>
   </div>
 
