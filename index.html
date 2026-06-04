@@ -136,15 +136,19 @@ window.enterLiveModeAndGo = function(target){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   applyRoleUI();
+  // Mémoriser la cible pour que le subscribe Firestore navigue au bon endroit
+  ST._pendingTarget = target;
   subscribeToTournamentPublic();
   subscribeToResultsPublic();
+  // Navigation immédiate vers la bonne page sans attendre Firestore
+  // (le subscribe actualisera le contenu dès réception)
   if(target === 'R'){
-    // Afficher le règlement
-    setTimeout(()=>{ if(typeof toggleRules==='function') toggleRules(); }, 100);
+    goTo(4); // afficher page 4 d'abord
+    setTimeout(()=>{ if(typeof toggleRules==='function') toggleRules(); }, 300);
   } else if(target === 5){
-    setTimeout(()=>{ goTo(5); }, 100);
+    goTo(5);
   } else {
-    setTimeout(()=>{ goTo(4); }, 100);
+    goTo(4);
   }
 };
 
@@ -169,7 +173,9 @@ function subscribeToTournamentPublic(){
     if(data.activeRound!=null) ST.activeRound = data.activeRound;
     if(ST.page===4) renderTournament();
     if(ST.page===5) renderFinal();
-    if(ST.schedule.length>0 && ST.page<4) goTo(4);
+    // Si le tournoi vient de charger et qu'on est sur page 4 avec schedule vide avant,
+    // forcer un re-render complet (cas spectateur qui arrive avant les données)
+    if(ST.schedule.length>0 && ST.page<=4) goTo(4);
   });
 }
 function normalizeResult(data){
@@ -505,12 +511,14 @@ window.goTo = function(n){
   if(n<=3 && !isAdmin()){
     if(ST.schedule.length>0){ n=4; }
     else {
-      // spectateur sans tournoi actif : afficher un message doux
-      const si=document.getElementById('spectatorInfo');
-      if(si){ si.style.display=''; si.innerHTML='👁 Mode <strong>Spectateur</strong> — aucun tournoi actif pour l\'instant. Revenez plus tard !'; }
+      // spectateur sans tournoi actif : afficher page 4 avec message d'attente
+      // (le subscribe mettra à jour dès que les données arrivent)
       document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
       document.getElementById('page4').classList.add('active');
       ST.page=4; updateSteps(4); window.scrollTo(0,0);
+      const si=document.getElementById('spectatorInfo');
+      if(si){ si.style.display=''; si.innerHTML='👁 Mode <strong>Spectateur</strong> — chargement en cours ou aucun tournoi actif. Revenez plus tard !'; }
+      updateSpectatorNav(4);
       return;
     }
   }
@@ -529,7 +537,17 @@ window.goTo = function(n){
   updateSteps(n);
   window.scrollTo(0,0);
   if(n===3) renderGen();
-  if(n===4){ renderTournament(); const si=document.getElementById('spectatorInfo'); if(si) si.style.display=USER_ROLE==='spectator'?'':'none'; }
+  if(n===4){
+    renderTournament();
+    const si=document.getElementById('spectatorInfo');
+    if(si){
+      if(USER_ROLE==='spectator' && ST.schedule.length===0){
+        si.style.display='';
+      } else {
+        si.style.display='none';
+      }
+    }
+  }
   if(n===5) renderFinal();
   // Mettre à jour la nav spectateur
   updateSpectatorNav(n);
@@ -2267,16 +2285,21 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
     <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:12px"></div>
 
     <!-- ACCÈS RAPIDE SPECTATEUR -->
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
-      <div style="text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:4px">Accès spectateur</div>
+    <div style="background:linear-gradient(135deg,rgba(122,220,255,.08),rgba(255,208,128,.06));border:1.5px solid rgba(122,220,255,.35);border-radius:14px;padding:16px 14px;margin-bottom:22px">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px">
+        <span style="width:8px;height:8px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span>
+        <span style="font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:1.5px;color:#7adcff;text-transform:uppercase;font-weight:700">Accès Spectateur</span>
+        <span style="width:8px;height:8px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span>
+      </div>
+      <div style="text-align:center;font-size:11px;color:rgba(255,255,255,.45);letter-spacing:.5px;margin-bottom:12px;text-transform:uppercase">Sans compte — accès instantané</div>
       <div style="display:flex;gap:8px">
-        <button onclick="enterLiveModeAndGo(4)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#7adcff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#7adcff'" onmouseout="this.style.borderColor='#4a7090'">
-          <span style="width:6px;height:6px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span> Live
+        <button onclick="enterLiveModeAndGo(4)" style="flex:1;padding:13px 8px;background:linear-gradient(135deg,#0d2540,#1a3a60);border:2px solid #4a8ab0;border-radius:10px;color:#7adcff;font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:.8px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 12px rgba(122,220,255,.15)" onmouseover="this.style.borderColor='#7adcff';this.style.boxShadow='0 4px 18px rgba(122,220,255,.35)'" onmouseout="this.style.borderColor='#4a8ab0';this.style.boxShadow='0 2px 12px rgba(122,220,255,.15)'">
+          📺 Live
         </button>
-        <button onclick="enterLiveModeAndGo(5)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#ffd080'" onmouseout="this.style.borderColor='#4a7090'">
+        <button onclick="enterLiveModeAndGo(5)" style="flex:1;padding:13px 8px;background:linear-gradient(135deg,#251a00,#3a2800);border:2px solid #8a7030;border-radius:10px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:.8px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 12px rgba(255,208,128,.12)" onmouseover="this.style.borderColor='#ffd080';this.style.boxShadow='0 4px 18px rgba(255,208,128,.3)'" onmouseout="this.style.borderColor='#8a7030';this.style.boxShadow='0 2px 12px rgba(255,208,128,.12)'">
           🏆 Classement
         </button>
-        <button onclick="enterLiveModeAndGo('R')" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:rgba(255,255,255,.7);font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='rgba(255,255,255,.6)'" onmouseout="this.style.borderColor='#4a7090'">
+        <button onclick="enterLiveModeAndGo('R')" style="flex:1;padding:13px 8px;background:linear-gradient(135deg,#101010,#1e1e1e);border:2px solid #505050;border-radius:10px;color:rgba(255,255,255,.8);font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:.8px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)" onmouseover="this.style.borderColor='rgba(255,255,255,.7)';this.style.boxShadow='0 4px 14px rgba(255,255,255,.1)'" onmouseout="this.style.borderColor='#505050';this.style.boxShadow='0 2px 8px rgba(0,0,0,.3)'">
           📋 Règlement
         </button>
       </div>
