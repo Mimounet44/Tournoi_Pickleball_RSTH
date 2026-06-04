@@ -171,11 +171,25 @@ function subscribeToTournamentPublic(){
     if(data.players)  ST.players  = data.players;
     if(data.schedule) ST.schedule = data.schedule;
     if(data.activeRound!=null) ST.activeRound = data.activeRound;
-    if(ST.page===4) renderTournament();
-    if(ST.page===5) renderFinal();
-    // Si le tournoi vient de charger et qu'on est sur page 4 avec schedule vide avant,
-    // forcer un re-render complet (cas spectateur qui arrive avant les données)
-    if(ST.schedule.length>0 && ST.page<=4) goTo(4);
+    // Rendu selon la page courante — appels directs sans passer par goTo()
+    // pour éviter les problèmes de timing de patch et les redirections non voulues
+    if(ST.page===5){ renderFinal(); return; }
+    // Page 4 ou navigation en attente : afficher le tournoi
+    if(ST.schedule.length>0){
+      // Assurer que la page 4 est visible
+      if(ST.page!==4){
+        document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+        const p4=document.getElementById('page4');
+        if(p4) p4.classList.add('active');
+        ST.page=4;
+        updateSteps(4);
+        window.scrollTo(0,0);
+        updateSpectatorNav(4);
+        const si=document.getElementById('spectatorInfo');
+        if(si) si.style.display='none';
+      }
+      renderTournament();
+    }
   });
 }
 function normalizeResult(data){
@@ -187,7 +201,7 @@ function subscribeToResultsPublic(){
       if(change.type==='removed') delete ST.results[change.doc.id];
       else ST.results[change.doc.id]=normalizeResult(change.doc.data());
     });
-    if(ST.page===4){ renderMatches(); renderMiniStandings(); checkDone(); }
+    if(ST.page===4 && ST.schedule.length>0){ renderMatches(); renderMiniStandings(); checkDone(); }
     if(ST.page===5) renderFinal();
   });
 }
