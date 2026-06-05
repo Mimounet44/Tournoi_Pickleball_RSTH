@@ -100,6 +100,11 @@ onAuthStateChanged(auth, async (user)=>{
     CURRENT_USER = null;
     USER_ROLE    = null;
     unsubAll();
+    // Charger liveOpen depuis Firestore avant d'afficher l'écran de connexion
+    try {
+      const snap = await getDoc(doc(db,'tournament','current'));
+      if(snap.exists()) ST.liveOpen = snap.data().liveOpen === true;
+    } catch(e){ /* réseau absent : live considéré fermé par défaut */ }
     showLogin();
   }
 });
@@ -131,24 +136,26 @@ window.logout = async function(){
 
 // ── Mode Live sans compte avec redirection ────────────────
 window.enterLiveModeAndGo = function(target){
+  // Le règlement est toujours accessible, mais Live/Classement nécessitent liveOpen
+  if(target !== 'R' && !ST.liveOpen){
+    // Afficher le message de fermeture sans entrer dans l'app
+    const overlay = document.getElementById('liveClosedOverlay');
+    if(overlay) overlay.style.display='flex';
+    return;
+  }
   CURRENT_USER = null;
   USER_ROLE    = 'spectator';
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   applyRoleUI();
-  // Mémoriser la cible pour que le subscribe Firestore navigue au bon endroit
-  ST._pendingTarget = target;
   subscribeToTournamentPublic();
   subscribeToResultsPublic();
-  // Navigation immédiate vers la bonne page sans attendre Firestore
-  // (le subscribe actualisera le contenu dès réception)
   if(target === 'R'){
-    goTo(4); // afficher page 4 d'abord
-    setTimeout(()=>{ if(typeof toggleRules==='function') toggleRules(); }, 300);
+    setTimeout(()=>{ if(typeof toggleRules==='function') toggleRules(); }, 100);
   } else if(target === 5){
-    goTo(5);
+    setTimeout(()=>{ goTo(5); }, 100);
   } else {
-    goTo(4);
+    setTimeout(()=>{ goTo(4); }, 100);
   }
 };
 
@@ -171,25 +178,11 @@ function subscribeToTournamentPublic(){
     if(data.players)  ST.players  = data.players;
     if(data.schedule) ST.schedule = data.schedule;
     if(data.activeRound!=null) ST.activeRound = data.activeRound;
-    // Rendu selon la page courante — appels directs sans passer par goTo()
-    // pour éviter les problèmes de timing de patch et les redirections non voulues
-    if(ST.page===5){ renderFinal(); return; }
-    // Page 4 ou navigation en attente : afficher le tournoi
-    if(ST.schedule.length>0){
-      // Assurer que la page 4 est visible
-      if(ST.page!==4){
-        document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-        const p4=document.getElementById('page4');
-        if(p4) p4.classList.add('active');
-        ST.page=4;
-        updateSteps(4);
-        window.scrollTo(0,0);
-        updateSpectatorNav(4);
-        const si=document.getElementById('spectatorInfo');
-        if(si) si.style.display='none';
-      }
-      renderTournament();
-    }
+    // Statut live (contrôlé par l'admin)
+    ST.liveOpen = data.liveOpen === true;
+    if(ST.page===4) renderTournament();
+    if(ST.page===5) renderFinal();
+    if(ST.schedule.length>0 && ST.page<4) goTo(4);
   });
 }
 function normalizeResult(data){
@@ -201,7 +194,7 @@ function subscribeToResultsPublic(){
       if(change.type==='removed') delete ST.results[change.doc.id];
       else ST.results[change.doc.id]=normalizeResult(change.doc.data());
     });
-    if(ST.page===4 && ST.schedule.length>0){ renderMatches(); renderMiniStandings(); checkDone(); }
+    if(ST.page===4){ renderMatches(); renderMiniStandings(); checkDone(); }
     if(ST.page===5) renderFinal();
   });
 }
@@ -306,6 +299,7 @@ function applyRoleUI(){
   if(si) si.style.display = isSpec ? '' : 'none';
   updateStepVisibility();
   updateFwdBtn();
+  updateLiveToggleBtn();
 }
 function updateStepVisibility(){
   // Admin : étapes 1–5 | Scorer/Spectateur : 4–5 seulement
@@ -402,6 +396,8 @@ function subscribeToTournament(){
     if(data.players)  ST.players  = data.players;
     if(data.schedule) ST.schedule = data.schedule;
     if(data.activeRound!=null) ST.activeRound = data.activeRound;
+    ST.liveOpen = data.liveOpen === true;
+    updateLiveToggleBtn();
     if(ST.page===3) renderGen();
     if(ST.page===4) renderTournament();
     if(ST.page===5) renderFinal();
@@ -525,14 +521,12 @@ window.goTo = function(n){
   if(n<=3 && !isAdmin()){
     if(ST.schedule.length>0){ n=4; }
     else {
-      // spectateur sans tournoi actif : afficher page 4 avec message d'attente
-      // (le subscribe mettra à jour dès que les données arrivent)
+      // spectateur sans tournoi actif : afficher un message doux
+      const si=document.getElementById('spectatorInfo');
+      if(si){ si.style.display=''; si.innerHTML='👁 Mode <strong>Spectateur</strong> — aucun tournoi actif pour l\'instant. Revenez plus tard !'; }
       document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
       document.getElementById('page4').classList.add('active');
       ST.page=4; updateSteps(4); window.scrollTo(0,0);
-      const si=document.getElementById('spectatorInfo');
-      if(si){ si.style.display=''; si.innerHTML='👁 Mode <strong>Spectateur</strong> — chargement en cours ou aucun tournoi actif. Revenez plus tard !'; }
-      updateSpectatorNav(4);
       return;
     }
   }
@@ -551,17 +545,7 @@ window.goTo = function(n){
   updateSteps(n);
   window.scrollTo(0,0);
   if(n===3) renderGen();
-  if(n===4){
-    renderTournament();
-    const si=document.getElementById('spectatorInfo');
-    if(si){
-      if(USER_ROLE==='spectator' && ST.schedule.length===0){
-        si.style.display='';
-      } else {
-        si.style.display='none';
-      }
-    }
-  }
+  if(n===4){ renderTournament(); const si=document.getElementById('spectatorInfo'); if(si) si.style.display=USER_ROLE==='spectator'?'':'none'; }
   if(n===5) renderFinal();
   // Mettre à jour la nav spectateur
   updateSpectatorNav(n);
@@ -1603,15 +1587,23 @@ document.addEventListener('DOMContentLoaded',()=>{
 function computeStandings(){
   const stats={};
   ST.players.slice(0,ST.cfg.n).forEach(p=>{stats[p.id]={id:p.id,name:p.name,g:p.g,lv:p.lv,pts:0,w:0,d:0,l:0,gf:0,ga:0,played:0,byeTours:0,h2h:{}};});
-  // Compensation bye : chaque tour en tant que remplaçant = +2 pts (match nul fictif 0-0)
-  ST.schedule.forEach(rd=>rd.subs.forEach(id=>{
-    if(!stats[id])return;
-    stats[id].byeTours++;
-    stats[id].pts+=2;   // équivalent match nul
-    stats[id].d++;      // compté comme nul
-    stats[id].played++; // compté comme match joué
-    // gf et ga restent à 0 (score fictif 0-0)
-  }));
+  // Compensation bye : points attribués UNIQUEMENT si au moins un match du tour a un score saisi
+  // (évite de comptabiliser des points si des changements imprévus sont effectués avant le début)
+  ST.schedule.forEach((rd,r)=>{
+    // Vérifier si au moins un score a été saisi dans ce tour
+    const roundHasScore = rd.waves.some((wv,w)=>wv.matches.some((_,mi)=>{
+      const res=getRes(r,w,mi); return res.ga!==''||res.gb!=='';
+    }));
+    if(!roundHasScore) return; // pas encore commencé → pas de points bye
+    rd.subs.forEach(id=>{
+      if(!stats[id])return;
+      stats[id].byeTours++;
+      stats[id].pts+=2;   // équivalent match nul
+      stats[id].d++;      // compté comme nul
+      stats[id].played++; // compté comme match joué
+      // gf et ga restent à 0 (score fictif 0-0)
+    });
+  });
   ST.schedule.forEach((round,r)=>round.waves.forEach((wv,w)=>wv.matches.forEach((m,mi)=>{
     const res=getRes(r,w,mi);if(res.ga===''||res.gb==='')return;
     const ga=+res.ga,gb=+res.gb;
@@ -1770,6 +1762,49 @@ function _unlockAudio(){
   const src = ac.createBufferSource();
   src.buffer = buf; src.connect(ac.destination);
   src.start(0);
+}
+
+// ══════════════════════════════════════════════════════════
+// LIVE OPEN / FERMÉ — contrôle admin
+// ══════════════════════════════════════════════════════════
+// Ouvre le règlement depuis l'overlay "live fermé" sans entrer dans la page live
+window.openReglement = function(){
+  CURRENT_USER = null;
+  USER_ROLE    = 'spectator';
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+  applyRoleUI();
+  // Afficher directement la page règlement sans goTo(4)
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const pageR = document.getElementById('pageR');
+  if(pageR){ pageR.classList.add('active'); ST.rulesOpen=true; }
+  else { toggleRules(); } // fallback
+  const ruleBtn = document.getElementById('ruleBtn');
+  if(ruleBtn) ruleBtn.textContent='× Fermer';
+  window.scrollTo(0,0);
+};
+
+window.toggleLiveOpen = async function(){
+  if(!isAdmin()){ alert('Admin uniquement.'); return; }
+  const newVal = !ST.liveOpen;
+  await saveTournament({ liveOpen: newVal });
+  // ST.liveOpen et bouton mis à jour via le subscribe
+};
+
+function updateLiveToggleBtn(){
+  const btn = document.getElementById('liveToggleBtn');
+  if(!btn) return;
+  if(ST.liveOpen){
+    btn.textContent = '🟢 Live ouvert';
+    btn.style.background = 'linear-gradient(135deg,#0d3320,#1a5c35)';
+    btn.style.borderColor = '#2a9d5c';
+    btn.style.color = '#5ddc8e';
+  } else {
+    btn.textContent = '🔴 Live fermé';
+    btn.style.background = 'linear-gradient(135deg,#330d0d,#5c1a1a)';
+    btn.style.borderColor = '#9d2a2a';
+    btn.style.color = '#dc5d5d';
+  }
 }
 
 function updateTimerDisplay(){
@@ -2299,21 +2334,16 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
     <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:12px"></div>
 
     <!-- ACCÈS RAPIDE SPECTATEUR -->
-    <div style="background:linear-gradient(135deg,rgba(122,220,255,.08),rgba(255,208,128,.06));border:1.5px solid rgba(122,220,255,.35);border-radius:14px;padding:16px 14px;margin-bottom:22px">
-      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px">
-        <span style="width:8px;height:8px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span>
-        <span style="font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:1.5px;color:#7adcff;text-transform:uppercase;font-weight:700">Accès Spectateur</span>
-        <span style="width:8px;height:8px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span>
-      </div>
-      <div style="text-align:center;font-size:11px;color:rgba(255,255,255,.45);letter-spacing:.5px;margin-bottom:12px;text-transform:uppercase">Sans compte — accès instantané</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
+      <div style="text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:4px">Accès spectateur</div>
       <div style="display:flex;gap:8px">
-        <button onclick="enterLiveModeAndGo(4)" style="flex:1;padding:13px 8px;background:linear-gradient(135deg,#0d2540,#1a3a60);border:2px solid #4a8ab0;border-radius:10px;color:#7adcff;font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:.8px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 12px rgba(122,220,255,.15)" onmouseover="this.style.borderColor='#7adcff';this.style.boxShadow='0 4px 18px rgba(122,220,255,.35)'" onmouseout="this.style.borderColor='#4a8ab0';this.style.boxShadow='0 2px 12px rgba(122,220,255,.15)'">
-          📺 Live
+        <button onclick="enterLiveModeAndGo(4)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#7adcff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#7adcff'" onmouseout="this.style.borderColor='#4a7090'">
+          <span style="width:6px;height:6px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span> Live
         </button>
-        <button onclick="enterLiveModeAndGo(5)" style="flex:1;padding:13px 8px;background:linear-gradient(135deg,#251a00,#3a2800);border:2px solid #8a7030;border-radius:10px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:.8px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 12px rgba(255,208,128,.12)" onmouseover="this.style.borderColor='#ffd080';this.style.boxShadow='0 4px 18px rgba(255,208,128,.3)'" onmouseout="this.style.borderColor='#8a7030';this.style.boxShadow='0 2px 12px rgba(255,208,128,.12)'">
+        <button onclick="enterLiveModeAndGo(5)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#ffd080'" onmouseout="this.style.borderColor='#4a7090'">
           🏆 Classement
         </button>
-        <button onclick="enterLiveModeAndGo('R')" style="flex:1;padding:13px 8px;background:linear-gradient(135deg,#101010,#1e1e1e);border:2px solid #505050;border-radius:10px;color:rgba(255,255,255,.8);font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:.8px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)" onmouseover="this.style.borderColor='rgba(255,255,255,.7)';this.style.boxShadow='0 4px 14px rgba(255,255,255,.1)'" onmouseout="this.style.borderColor='#505050';this.style.boxShadow='0 2px 8px rgba(0,0,0,.3)'">
+        <button onclick="enterLiveModeAndGo('R')" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:rgba(255,255,255,.7);font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='rgba(255,255,255,.6)'" onmouseout="this.style.borderColor='#4a7090'">
           📋 Règlement
         </button>
       </div>
@@ -2342,6 +2372,28 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
       </button>
     </div>
 
+  </div>
+</div>
+
+<!-- OVERLAY LIVE FERMÉ -->
+<div id="liveClosedOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.82);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:24px">
+  <div style="max-width:380px;width:100%;background:linear-gradient(160deg,#1a1008,#0d0d1a);border:2px solid rgba(255,180,50,.3);border-radius:18px;padding:32px 24px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.7)">
+    <div style="font-size:52px;margin-bottom:12px">🔒</div>
+    <div style="font-family:'Oswald',sans-serif;font-size:22px;font-weight:700;color:#ffd080;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:16px">Live non disponible</div>
+    <div style="font-size:15px;color:rgba(255,255,255,.8);line-height:1.6;margin-bottom:10px">
+      Le live n'est pas encore ouvert.
+    </div>
+    <div style="font-size:13px;color:rgba(255,208,128,.7);background:rgba(255,208,128,.07);border:1px solid rgba(255,208,128,.2);border-radius:10px;padding:12px 16px;margin-bottom:24px;line-height:1.6">
+      ⏰ Le live ouvrira environ <strong style="color:#ffd080">30 minutes avant le début du tournoi</strong>.<br>Revenez un peu plus tard !
+    </div>
+    <button onclick="document.getElementById('liveClosedOverlay').style.display='none'"
+      style="padding:12px 32px;background:linear-gradient(135deg,#2a1800,#4a3000);border:2px solid #8a6020;border-radius:10px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;cursor:pointer;text-transform:uppercase;width:100%">
+      ← Retour
+    </button>
+    <div style="margin-top:16px;font-size:12px;color:rgba(255,255,255,.35)">Le règlement du tournoi reste accessible →
+      <button onclick="document.getElementById('liveClosedOverlay').style.display='none';openReglement()"
+        style="background:none;border:none;color:rgba(255,255,255,.5);font-size:12px;text-decoration:underline;cursor:pointer;padding:0 4px">Voir le règlement</button>
+    </div>
   </div>
 </div>
 
@@ -2641,6 +2693,14 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <!-- Info spectateur -->
   <div class="info info-b" id="spectatorInfo" style="display:none;margin-bottom:16px">
     👁 Mode <strong>Spectateur</strong> — vue en lecture seule, mise à jour en temps réel.
+  </div>
+
+  <!-- Bouton Live ouvert/fermé — admin uniquement -->
+  <div data-role="admin" style="display:none;margin-bottom:14px">
+    <button id="liveToggleBtn" onclick="toggleLiveOpen()"
+      style="width:100%;padding:11px 16px;border-radius:10px;border:2px solid #9d2a2a;background:linear-gradient(135deg,#330d0d,#5c1a1a);color:#dc5d5d;font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;cursor:pointer;text-transform:uppercase;transition:all .25s">
+      🔴 Live fermé
+    </button>
   </div>
 
   <div class="sec-ttl">🏓 Matchs en cours</div>
