@@ -596,6 +596,13 @@ function updateSteps(n){
 }
 window.toggleRules = function(){
   ST.rulesOpen=!ST.rulesOpen;
+  // Si on ferme le règlement et que le live est fermé pour un spectateur → retour écran connexion
+  if(!ST.rulesOpen && USER_ROLE==='spectator' && !ST.liveOpen){
+    document.getElementById('appScreen').style.display='none';
+    document.getElementById('loginScreen').style.display='block';
+    CURRENT_USER=null; USER_ROLE=null;
+    return;
+  }
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   const backPage = ST.rulesOpen ? 'pageR' : 'page'+(isAdmin()?ST.page:4);
   document.getElementById(backPage).classList.add('active');
