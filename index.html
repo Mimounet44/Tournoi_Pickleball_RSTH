@@ -628,6 +628,7 @@ window.toggleRules = function(){
   document.getElementById('ruleBtn').textContent=ST.rulesOpen?'× Fermer':'📋 Règlement';
   document.getElementById('backBtn').style.display=(ST.rulesOpen||ST.page>1)&&isAdmin()?'':'none';
   updateFwdBtn();
+  if(ST.rulesOpen) applyRoleUI(); // re-appliquer les rôles pour afficher les boutons admin dans pageR
   if(!ST.rulesOpen) updateSpectatorNav(isAdmin()?ST.page:4);
 };
 
