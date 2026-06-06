@@ -1879,7 +1879,12 @@ function _pRankTable(arr,pad){return '<table><thead><tr><th>#</th><th style="tex
 function _pMatchRow(m,mi,ri,wi,showScore){var row='<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:#fff;border:1px solid #ddd;border-radius:4px;margin-bottom:3px;font-family:sans-serif;font-size:12px">';row+='<span style="font-weight:700;color:#888;min-width:26px">T'+(mi+1)+'</span>';row+='<span style="font-weight:700;flex:1">'+pName(m.pA1)+' + '+pName(m.pA2)+'</span>';if(showScore){var res=getRes(ri,wi,mi);var done=res.ga!==''&&res.gb!=='';var cA=done?(res.ga>res.gb?'#1e8c45':'#c0281a'):'#999';var cB=done?(res.gb>res.ga?'#1e8c45':'#c0281a'):'#999';row+='<span style="font-size:17px;font-weight:900;color:'+cA+';min-width:26px;text-align:center">'+(done?res.ga:'__')+'</span><span style="color:#888;font-weight:700">&#8211;</span><span style="font-size:17px;font-weight:900;color:'+cB+';min-width:26px;text-align:center">'+(done?res.gb:'__')+'</span>';}else{row+='<span style="color:#aaa;font-weight:700;padding:0 6px">VS</span>';}row+='<span style="font-weight:700;flex:1;text-align:right">'+pName(m.pB1)+' + '+pName(m.pB2)+'</span></div>';return row;}
 function _pWaveBlock(wv,wi,nWaves,ri,showScore){var h='';if(nWaves>1)h='<div style="font-size:11px;font-weight:700;color:#555;margin:7px 0 3px">Vague '+(wi+1)+' &middot; '+wv.waveTime+'</div>';else h='<div style="font-size:11px;color:#888;margin-bottom:4px">'+wv.waveTime+'</div>';wv.matches.forEach(function(m,mi){h+=_pMatchRow(m,mi,ri,wi,showScore);});return h;}
 function _pRoundBlock(rd,ri,showScore){var subTxt=rd.subs.length?(' &middot; Remplacant'+(rd.subs.length>1?'s':'')+': '+rd.subs.map(function(id){return pName(id);}).join(', ')):'  &middot; Tous jouent';var h='<div style="margin-bottom:14px;page-break-inside:avoid"><div style="background:#1a1410;color:#fff;padding:7px 12px;font-size:13px;font-weight:700">Tour '+(ri+1)+' &middot; '+rd.roundTime+subTxt+'</div><div style="padding:8px;background:#f7f3ee;border:1px solid #ccc;border-top:none">';rd.waves.forEach(function(wv,wi){h+=_pWaveBlock(wv,wi,rd.waves.length,ri,showScore);});h+='</div></div>';return h;}
-function _pOpenWindow(name,title,body){var win=window.open('','_'+name,'width=900,height=700');win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>body{margin:16px;font-family:sans-serif;font-size:12px}table{width:100%;border-collapse:collapse}th{padding:6px;background:#1a1410;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px}@page{margin:6mm}@media print{.no-print{display:none !important}.print-title{display:none !important}body{margin:0}}</style></head><body>'+body+'<div class="no-print" style="margin-top:20px"><button onclick="window.print()">Imprimer</button> <button onclick="window.close()">Fermer</button></div></body></html>');win.document.close();setTimeout(function(){win.print();},400);}
+function _pOpenWindow(name,title,body){var win=window.open('','_'+name,'width=900,height=700');win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>body{margin:16px;font-family:sans-serif;font-size:12px}table{width:100%;border-collapse:collapse}th{padding:6px;background:#1a1410;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px}@page{size:auto;margin:0mm}@media print{.no-print{display:none !important}.print-title{display:none !important}body{margin:6mm 8mm}}</style></head><body>'+body+'<div class="no-print" style="margin-top:20px"><button onclick="window.print()">Imprimer</button> <button onclick="window.close()">Fermer</button></div></body></html>');win.document.close();setTimeout(function(){win.print();},400);}
+window.reloadApp = function(){
+  if(!confirm('Recharger la dernière version de l\'application ?\n\nLes données du tournoi en cours seront conservées dans le navigateur.')){return;}
+  var url = location.href.split('?')[0];
+  location.replace(url + '?v=' + Date.now());
+};
 window.printPlanning = function(){var body='<div class="print-title" style="font-size:18px;font-weight:700;margin-bottom:14px;border-bottom:2px solid #333;padding-bottom:8px">Planning &mdash; Pickleball Americano &middot; '+ST.cfg.n+' joueurs &middot; '+ST.cfg.t+' terrains &middot; '+ST.cfg.r+' tours</div>';ST.schedule.forEach(function(rd,ri){body+=_pRoundBlock(rd,ri,false);});_pOpenWindow('planning','Planning - Pickleball Americano',body);};
 window.printCurrentRound = function(){var ri=ST.activeRound;var rd=ST.schedule[ri];if(!rd)return;var st=computeStandings();var subTxt=rd.subs.length?' &middot; Remplacant'+(rd.subs.length>1?'s':'')+': '+rd.subs.map(function(id){return pName(id);}).join(', '):'';var body='<div class="print-title" style="font-size:17px;font-weight:700;margin-bottom:12px;border-bottom:2px solid #333;padding-bottom:8px">Tour '+(ri+1)+' &mdash; Pickleball Americano &middot; '+rd.roundTime+subTxt+'</div>';body+='<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;color:#555">Matchs du tour</div>';rd.waves.forEach(function(wv,wi){body+=_pWaveBlock(wv,wi,rd.waves.length,ri,true);});body+='<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:18px 0 8px;color:#555">Classement apres '+(ri+1)+' tour'+(ri>0?'s':'')+'</div>';body+=_pRankTable(st);_pOpenWindow('round','Tour '+(ri+1)+' - Pickleball Americano',body);};
 // ══════════════════════════════════════════════════════════
@@ -2178,8 +2183,8 @@ window.printRules = function(){
     +'p{margin:1px 0 2px;line-height:1.3}'
     +'strong{color:#1a1410}'
     +'.rules-block{margin-bottom:5px}'
-    +'@page{margin:6mm}'
-    +'@media print{.no-print{display:none !important}body{margin:0}.rules-block{margin-bottom:3px}}'
+    +'@page{size:auto;margin:0mm}'
+    +'@media print{.no-print{display:none !important}body{margin:6mm 8mm}.rules-block{margin-bottom:3px}}'
     +'</style></head><body>'
     +body
     +'<div class="no-print" style="margin-top:16px;text-align:center;display:flex;gap:10px;justify-content:center">'
@@ -2993,6 +2998,16 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   </div>
   <div class="info mt12" id="cfgBox"></div>
   <div class="mt16"><button class="btn btn-g" onclick="saveCfgAndNext()">Saisir les joueurs →</button></div>
+
+  <div style="margin-top:32px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08)">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px">Application</div>
+    <button class="btn btn-ghost btn-sm" onclick="reloadApp()" style="font-size:12px;gap:6px">
+      🔄 Recharger l'application
+    </button>
+    <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5">
+      Recharge la dernière version du fichier HTML sans perdre les données en cours.
+    </div>
+  </div>
 </div>
 </div>
 
