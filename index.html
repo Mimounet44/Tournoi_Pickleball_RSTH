@@ -1894,9 +1894,11 @@ function getPlayerSchedule(pid){
     if(isSub){
       rows.push({ ri:ri, roundTime:rd.roundTime, type:'sub',
         waveTime:rd.roundTime, court:'-', partner:null,
-        oppA:null, oppB:null });
+        oppA:null, oppB:null, waveLabel:'-' });
       return;
     }
+    // Calculer le numéro de vague réel (vagues normales seulement, sans les early)
+    var normalWaves = rd.waves.filter(function(wv){ return !wv._isEarlyWave; });
     rd.waves.forEach(function(wv, wi){
       wv.matches.forEach(function(m, mi){
         var inMatch = [m.pA1,m.pA2,m.pB1,m.pB2].indexOf(pid) !== -1;
@@ -1908,12 +1910,21 @@ function getPlayerSchedule(pid){
         var res    = getRes(ri, wi, mi);
         var myScore  = isA ? res.ga : res.gb;
         var oppScore = isA ? res.gb : res.ga;
+        // Numéro de vague affiché
+        var waveLabel;
+        if(wv._isEarlyWave){
+          waveLabel = 'Anticipé';
+        } else if(normalWaves.length <= 1){
+          waveLabel = '-'; // une seule vague → pas de numéro utile
+        } else {
+          waveLabel = 'V'+(normalWaves.indexOf(wv)+1);
+        }
         rows.push({ ri:ri, roundTime:rd.roundTime, type:'match',
           wi:wi, mi:mi, waveTime:wv.waveTime,
           court:'T'+(mi+1), partner:partner,
           opp1:opp1, opp2:opp2,
           myScore:myScore, oppScore:oppScore,
-          early:!!m._early });
+          early:!!m._early, waveLabel:waveLabel });
       });
     });
   });
