@@ -54,6 +54,7 @@ const ST = {
   schedule:[],
   results:{},
   activeRound:0,
+  liveOpen:false,
   timerSec:0, timerRun:false, timerMode:'match', timerIv:null,
   cfg:{n:24,t:5,r:7,mt:10,tt:3,tp:5,bal:'both',start:'09:00'},
   sub:{targetId:null,selId:null}
@@ -62,6 +63,8 @@ const ST = {
 // ─── Helpers rôle ───────────────────────────────────────
 function isAdmin()  { return USER_ROLE === 'admin'; }
 function isScorer() { return USER_ROLE === 'admin' || USER_ROLE === 'scorer'; }
+// Live bloqué = spectateur ET liveOpen pas encore true
+function isLiveBlocked(){ return USER_ROLE === 'spectator' && !ST.liveOpen; }
 
 // ══════════════════════════════════════════════════════════
 // AUTH
@@ -138,13 +141,15 @@ window.logout = async function(){
 window.enterLiveModeAndGo = function(target){
   // Le règlement est toujours accessible, mais Live/Classement nécessitent liveOpen
   if(target !== 'R' && !ST.liveOpen){
-    // Afficher le message de fermeture sans entrer dans l'app
     const overlay = document.getElementById('liveClosedOverlay');
     if(overlay) overlay.style.display='flex';
     return;
   }
   CURRENT_USER = null;
   USER_ROLE    = 'spectator';
+  // Si on a passé la garde ci-dessus, le live est forcément ouvert
+  // On le confirme immédiatement (le snapshot Firestore le reconfirmera)
+  if(target !== 'R') ST.liveOpen = true;
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   applyRoleUI();
@@ -518,7 +523,7 @@ async function _savePlayerName(idx, newName){
 // ══════════════════════════════════════════════════════════
 // Accès live depuis le règlement ou la nav spec — bloqué si live fermé
 window.spectatorGoLive = function(n){
-  if(USER_ROLE==='spectator' && !ST.liveOpen){
+  if(isLiveBlocked()){
     document.getElementById('liveClosedOverlay').style.display='flex';
     return;
   }
@@ -527,7 +532,7 @@ window.spectatorGoLive = function(n){
 
 window.goTo = function(n){
   // Spectateur : bloquer Live (4) et Classement (5) si live fermé
-  if(USER_ROLE==='spectator' && !ST.liveOpen && (n===4||n===5)){
+  if(isLiveBlocked() && (n===4||n===5)){
     document.getElementById('liveClosedOverlay').style.display='flex';
     return;
   }
@@ -611,7 +616,7 @@ function updateSteps(n){
 window.toggleRules = function(){
   ST.rulesOpen=!ST.rulesOpen;
   // Si on ferme le règlement et que le live est fermé pour un spectateur → retour écran connexion
-  if(!ST.rulesOpen && USER_ROLE==='spectator' && !ST.liveOpen){
+  if(!ST.rulesOpen && isLiveBlocked()){
     document.getElementById('appScreen').style.display='none';
     document.getElementById('loginScreen').style.display='block';
     CURRENT_USER=null; USER_ROLE=null;
@@ -1980,7 +1985,7 @@ window.printPlayerSchedule = function(pid){
 
 // ── Vue spectateur : modal programme joueur ────────────────
 window.showPlayerList = function(){
-  if(USER_ROLE==='spectator' && !ST.liveOpen){
+  if(isLiveBlocked()){
     document.getElementById('liveClosedOverlay').style.display='flex';
     return;
   }
@@ -2855,7 +2860,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <button class="spec-nav-btn" data-target="5" onclick="spectatorGoLive(5)">
     🏆 Classement
   </button>
-  <button class="spec-nav-btn" data-target="P" onclick="if(USER_ROLE==='spectator'&&!ST.liveOpen){document.getElementById('liveClosedOverlay').style.display='flex';}else{showPlayerList()}">
+  <button class="spec-nav-btn" data-target="P" onclick="showPlayerList()">
     👤 Joueurs
   </button>
   <button class="spec-nav-btn" onclick="toggleRules()">
