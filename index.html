@@ -2137,6 +2137,43 @@ window.showPlayerProgram = function(pid){
 };
 
 // ── Impression tous les joueurs (admin) ────────────────────
+window.printRules = function(){
+  var sections = document.querySelectorAll('#pageR .card');
+  if(!sections.length){ alert('Règlement introuvable.'); return; }
+  var body = '';
+  sections.forEach(function(card){
+    var title = card.querySelector('.card-ttl');
+    var content = card.querySelector('.rules-section');
+    if(!title || !content) return;
+    body += '<div style="margin-bottom:20px;page-break-inside:avoid;border:1px solid #ddd;border-radius:6px;overflow:hidden">';
+    body += '<div style="background:#1a1410;color:#fff;padding:9px 14px;font-size:14px;font-weight:700">'+title.innerHTML+'</div>';
+    body += '<div style="padding:12px 16px;background:#fafaf8;font-size:12px;line-height:1.7;color:#222">'+content.innerHTML+'</div>';
+    body += '</div>';
+  });
+  var win = window.open('','_reglement','width=860,height=700');
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Règlement — Pickleball Americano</title>'
+    +'<style>'
+    +'body{margin:20px;font-family:\'Segoe UI\',Arial,sans-serif;font-size:12px;color:#222}'
+    +'h4{margin:10px 0 5px;font-size:12px;color:#1a1410;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #e0d8cc;padding-bottom:3px}'
+    +'ul,ol{margin:4px 0 8px;padding-left:20px}'
+    +'li{margin-bottom:3px}'
+    +'p{margin:5px 0 8px}'
+    +'strong{color:#1a1410}'
+    +'@media print{.no-print{display:none}body{margin:10px}}'
+    +'</style></head><body>'
+    +'<div style="text-align:center;margin-bottom:22px;border-bottom:3px solid #1a1410;padding-bottom:14px">'
+    +'<div style="font-size:22px;font-weight:900;color:#1a1410">📋 Règlement du tournoi</div>'
+    +'<div style="font-size:13px;color:#666;margin-top:4px">Pickleball Americano · '+new Date().toLocaleDateString('fr-FR',{year:'numeric',month:'long',day:'numeric'})+'</div>'
+    +'</div>'
+    +body
+    +'<div class="no-print" style="margin-top:22px;text-align:center;display:flex;gap:10px;justify-content:center">'
+    +'<button onclick="window.print()" style="padding:9px 24px;background:#1a1410;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">🖨 Imprimer</button>'
+    +'<button onclick="window.close()" style="padding:9px 24px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">Fermer</button>'
+    +'</div></body></html>');
+  win.document.close();
+  setTimeout(function(){ win.print(); }, 400);
+};
+
 window.printAllPlayersSchedule = function(){
   if(!ST.schedule.length){ alert('Aucun programme généré.'); return; }
   var body='<div style="font-size:18px;font-weight:700;margin-bottom:14px;border-bottom:2px solid #333;padding-bottom:8px">'
@@ -3255,6 +3292,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
 
   <div class="mt16 flex g8 fw">
     <button class="btn btn-ghost" onclick="toggleRules()">← Retour</button>
+    <button class="btn btn-b btn-sm" data-role="admin" style="display:none" onclick="printRules()">🖨 Imprimer le règlement</button>
     <button class="btn btn-g" onclick="spectatorGoLive(4)">📺 Voir le live →</button>
   </div>
 </div>
