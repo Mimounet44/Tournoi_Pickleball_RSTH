@@ -516,7 +516,21 @@ async function _savePlayerName(idx, newName){
 // ══════════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════════
+// Accès live depuis le règlement ou la nav spec — bloqué si live fermé
+window.spectatorGoLive = function(n){
+  if(USER_ROLE==='spectator' && !ST.liveOpen){
+    document.getElementById('liveClosedOverlay').style.display='flex';
+    return;
+  }
+  goTo(n);
+};
+
 window.goTo = function(n){
+  // Spectateur : bloquer Live (4) et Classement (5) si live fermé
+  if(USER_ROLE==='spectator' && !ST.liveOpen && (n===4||n===5)){
+    document.getElementById('liveClosedOverlay').style.display='flex';
+    return;
+  }
   // Pages 1-3 : admin uniquement
   if(n<=3 && !isAdmin()){
     if(ST.schedule.length>0){ n=4; }
@@ -2539,10 +2553,10 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
 
 <!-- BARRE NAVIGATION SPECTATEUR (masquée pour admin/scorer) -->
 <nav class="spec-nav" id="specNav">
-  <button class="spec-nav-btn spec-nav-active" data-target="4" onclick="goTo(4)">
+  <button class="spec-nav-btn spec-nav-active" data-target="4" onclick="spectatorGoLive(4)">
     <span class="spec-nav-live-dot"></span> Live
   </button>
-  <button class="spec-nav-btn" data-target="5" onclick="goTo(5)">
+  <button class="spec-nav-btn" data-target="5" onclick="spectatorGoLive(5)">
     🏆 Classement
   </button>
   <button class="spec-nav-btn" onclick="toggleRules()">
@@ -2936,7 +2950,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
 
   <div class="mt16 flex g8 fw">
     <button class="btn btn-ghost" onclick="toggleRules()">← Retour</button>
-    <button class="btn btn-g" onclick="goTo(4)">📺 Voir le live →</button>
+    <button class="btn btn-g" onclick="spectatorGoLive(4)">📺 Voir le live →</button>
   </div>
 </div>
 </div>
