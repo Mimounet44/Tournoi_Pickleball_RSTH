@@ -1980,6 +1980,10 @@ window.printPlayerSchedule = function(pid){
 
 // ── Vue spectateur : modal programme joueur ────────────────
 window.showPlayerList = function(){
+  if(USER_ROLE==='spectator' && !ST.liveOpen){
+    document.getElementById('liveClosedOverlay').style.display='flex';
+    return;
+  }
   var el = document.getElementById('playerListModal');
   if(el){ el.style.display='flex'; return; }
   // Créer la modal dynamiquement
@@ -2851,7 +2855,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <button class="spec-nav-btn" data-target="5" onclick="spectatorGoLive(5)">
     🏆 Classement
   </button>
-  <button class="spec-nav-btn" data-target="P" onclick="showPlayerList()">
+  <button class="spec-nav-btn" data-target="P" onclick="if(USER_ROLE==='spectator'&&!ST.liveOpen){document.getElementById('liveClosedOverlay').style.display='flex';}else{showPlayerList()}">
     👤 Joueurs
   </button>
   <button class="spec-nav-btn" onclick="toggleRules()">
