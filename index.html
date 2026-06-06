@@ -1879,7 +1879,7 @@ function _pRankTable(arr,pad){return '<table><thead><tr><th>#</th><th style="tex
 function _pMatchRow(m,mi,ri,wi,showScore){var row='<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:#fff;border:1px solid #ddd;border-radius:4px;margin-bottom:3px;font-family:sans-serif;font-size:12px">';row+='<span style="font-weight:700;color:#888;min-width:26px">T'+(mi+1)+'</span>';row+='<span style="font-weight:700;flex:1">'+pName(m.pA1)+' + '+pName(m.pA2)+'</span>';if(showScore){var res=getRes(ri,wi,mi);var done=res.ga!==''&&res.gb!=='';var cA=done?(res.ga>res.gb?'#1e8c45':'#c0281a'):'#999';var cB=done?(res.gb>res.ga?'#1e8c45':'#c0281a'):'#999';row+='<span style="font-size:17px;font-weight:900;color:'+cA+';min-width:26px;text-align:center">'+(done?res.ga:'__')+'</span><span style="color:#888;font-weight:700">&#8211;</span><span style="font-size:17px;font-weight:900;color:'+cB+';min-width:26px;text-align:center">'+(done?res.gb:'__')+'</span>';}else{row+='<span style="color:#aaa;font-weight:700;padding:0 6px">VS</span>';}row+='<span style="font-weight:700;flex:1;text-align:right">'+pName(m.pB1)+' + '+pName(m.pB2)+'</span></div>';return row;}
 function _pWaveBlock(wv,wi,nWaves,ri,showScore){var h='';if(nWaves>1)h='<div style="font-size:11px;font-weight:700;color:#555;margin:7px 0 3px">Vague '+(wi+1)+' &middot; '+wv.waveTime+'</div>';else h='<div style="font-size:11px;color:#888;margin-bottom:4px">'+wv.waveTime+'</div>';wv.matches.forEach(function(m,mi){h+=_pMatchRow(m,mi,ri,wi,showScore);});return h;}
 function _pRoundBlock(rd,ri,showScore){var subTxt=rd.subs.length?(' &middot; Remplacant'+(rd.subs.length>1?'s':'')+': '+rd.subs.map(function(id){return pName(id);}).join(', ')):'  &middot; Tous jouent';var h='<div style="margin-bottom:14px;page-break-inside:avoid"><div style="background:#1a1410;color:#fff;padding:7px 12px;font-size:13px;font-weight:700">Tour '+(ri+1)+' &middot; '+rd.roundTime+subTxt+'</div><div style="padding:8px;background:#f7f3ee;border:1px solid #ccc;border-top:none">';rd.waves.forEach(function(wv,wi){h+=_pWaveBlock(wv,wi,rd.waves.length,ri,showScore);});h+='</div></div>';return h;}
-function _pOpenWindow(name,title,body){var win=window.open('','_'+name,'width=900,height=700');win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>body{margin:16px;font-family:sans-serif;font-size:12px}table{width:100%;border-collapse:collapse}th{padding:6px;background:#1a1410;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px}@media print{.no-print{display:none}.print-title{display:none}body{margin:4px}}</style></head><body>'+body+'<div class="no-print" style="margin-top:20px"><button onclick="window.print()">Imprimer</button> <button onclick="window.close()">Fermer</button></div></body></html>');win.document.close();setTimeout(function(){win.print();},400);}
+function _pOpenWindow(name,title,body){var win=window.open('','_'+name,'width=900,height=700');win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>body{margin:16px;font-family:sans-serif;font-size:12px}table{width:100%;border-collapse:collapse}th{padding:6px;background:#1a1410;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px}@page{margin:6mm}@media print{.no-print{display:none !important}.print-title{display:none !important}body{margin:0}}</style></head><body>'+body+'<div class="no-print" style="margin-top:20px"><button onclick="window.print()">Imprimer</button> <button onclick="window.close()">Fermer</button></div></body></html>');win.document.close();setTimeout(function(){win.print();},400);}
 window.printPlanning = function(){var body='<div class="print-title" style="font-size:18px;font-weight:700;margin-bottom:14px;border-bottom:2px solid #333;padding-bottom:8px">Planning &mdash; Pickleball Americano &middot; '+ST.cfg.n+' joueurs &middot; '+ST.cfg.t+' terrains &middot; '+ST.cfg.r+' tours</div>';ST.schedule.forEach(function(rd,ri){body+=_pRoundBlock(rd,ri,false);});_pOpenWindow('planning','Planning - Pickleball Americano',body);};
 window.printCurrentRound = function(){var ri=ST.activeRound;var rd=ST.schedule[ri];if(!rd)return;var st=computeStandings();var subTxt=rd.subs.length?' &middot; Remplacant'+(rd.subs.length>1?'s':'')+': '+rd.subs.map(function(id){return pName(id);}).join(', '):'';var body='<div class="print-title" style="font-size:17px;font-weight:700;margin-bottom:12px;border-bottom:2px solid #333;padding-bottom:8px">Tour '+(ri+1)+' &mdash; Pickleball Americano &middot; '+rd.roundTime+subTxt+'</div>';body+='<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;color:#555">Matchs du tour</div>';rd.waves.forEach(function(wv,wi){body+=_pWaveBlock(wv,wi,rd.waves.length,ri,true);});body+='<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:18px 0 8px;color:#555">Classement apres '+(ri+1)+' tour'+(ri>0?'s':'')+'</div>';body+=_pRankTable(st);_pOpenWindow('round','Tour '+(ri+1)+' - Pickleball Americano',body);};
 // ══════════════════════════════════════════════════════════
@@ -2171,21 +2171,18 @@ window.printRules = function(){
   var win = window.open('','_reglement','width=860,height=700');
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Règlement — Pickleball Americano</title>'
     +'<style>'
-    +'body{margin:10px;font-family:\'Segoe UI\',Arial,sans-serif;font-size:11px;color:#222}'
-    +'h4{margin:5px 0 3px;font-size:11px;color:#1a1410;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e0d8cc;padding-bottom:2px}'
-    +'ul,ol{margin:2px 0 4px;padding-left:16px}'
-    +'li{margin-bottom:1px;line-height:1.4}'
-    +'p{margin:2px 0 4px;line-height:1.4}'
+    +'body{margin:8px;font-family:\'Segoe UI\',Arial,sans-serif;font-size:10.5px;color:#222}'
+    +'h4{margin:4px 0 2px;font-size:10.5px;color:#1a1410;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e0d8cc;padding-bottom:1px}'
+    +'ul,ol{margin:1px 0 3px;padding-left:14px}'
+    +'li{margin-bottom:0;line-height:1.3}'
+    +'p{margin:1px 0 2px;line-height:1.3}'
     +'strong{color:#1a1410}'
-    +'.rules-block{margin-bottom:8px}'
-    +'@media print{.no-print{display:none}.print-title{display:none}body{margin:4px}.rules-block{margin-bottom:5px}}'
+    +'.rules-block{margin-bottom:5px}'
+    +'@page{margin:6mm}'
+    +'@media print{.no-print{display:none !important}body{margin:0}.rules-block{margin-bottom:3px}}'
     +'</style></head><body>'
-    +'<div class="print-title" style="text-align:center;margin-bottom:12px;border-bottom:2px solid #1a1410;padding-bottom:8px">'
-    +'<div style="font-size:19px;font-weight:900;color:#1a1410">📋 Règlement du tournoi</div>'
-    +'<div style="font-size:11px;color:#666;margin-top:3px">Pickleball Americano · '+new Date().toLocaleDateString('fr-FR',{year:'numeric',month:'long',day:'numeric'})+'</div>'
-    +'</div>'
     +body
-    +'<div class="no-print" style="margin-top:22px;text-align:center;display:flex;gap:10px;justify-content:center">'
+    +'<div class="no-print" style="margin-top:16px;text-align:center;display:flex;gap:10px;justify-content:center">'
     +'<button onclick="window.print()" style="padding:9px 24px;background:#1a1410;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">🖨 Imprimer</button>'
     +'<button onclick="window.close()" style="padding:9px 24px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">Fermer</button>'
     +'</div></body></html>');
