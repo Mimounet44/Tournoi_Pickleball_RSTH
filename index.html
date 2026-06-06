@@ -1876,6 +1876,298 @@ function _pRoundBlock(rd,ri,showScore){var subTxt=rd.subs.length?(' &middot; Rem
 function _pOpenWindow(name,title,body){var win=window.open('','_'+name,'width=900,height=700');win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>body{margin:16px;font-family:sans-serif;font-size:12px}table{width:100%;border-collapse:collapse}th{padding:6px;background:#1a1410;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px}@media print{.no-print{display:none}}</style></head><body>'+body+'<div class="no-print" style="margin-top:20px"><button onclick="window.print()">Imprimer</button> <button onclick="window.close()">Fermer</button></div></body></html>');win.document.close();setTimeout(function(){win.print();},400);}
 window.printPlanning = function(){var body='<div style="font-size:18px;font-weight:700;margin-bottom:14px;border-bottom:2px solid #333;padding-bottom:8px">Planning &mdash; Pickleball Americano &middot; '+ST.cfg.n+' joueurs &middot; '+ST.cfg.t+' terrains &middot; '+ST.cfg.r+' tours</div>';ST.schedule.forEach(function(rd,ri){body+=_pRoundBlock(rd,ri,false);});_pOpenWindow('planning','Planning - Pickleball Americano',body);};
 window.printCurrentRound = function(){var ri=ST.activeRound;var rd=ST.schedule[ri];if(!rd)return;var st=computeStandings();var subTxt=rd.subs.length?' &middot; Remplacant'+(rd.subs.length>1?'s':'')+': '+rd.subs.map(function(id){return pName(id);}).join(', '):'';var body='<div style="font-size:17px;font-weight:700;margin-bottom:12px;border-bottom:2px solid #333;padding-bottom:8px">Tour '+(ri+1)+' &mdash; Pickleball Americano &middot; '+rd.roundTime+subTxt+'</div>';body+='<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;color:#555">Matchs du tour</div>';rd.waves.forEach(function(wv,wi){body+=_pWaveBlock(wv,wi,rd.waves.length,ri,true);});body+='<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:18px 0 8px;color:#555">Classement apres '+(ri+1)+' tour'+(ri>0?'s':'')+'</div>';body+=_pRankTable(st);_pOpenWindow('round','Tour '+(ri+1)+' - Pickleball Americano',body);};
+// ══════════════════════════════════════════════════════════
+// PROGRAMME INDIVIDUEL — impression + vue spectateur
+// ══════════════════════════════════════════════════════════
+
+// Retourne les infos de programme d'un joueur sur tout le tournoi
+function getPlayerSchedule(pid){
+  var rows = [];
+  ST.schedule.forEach(function(rd, ri){
+    var isSub = rd.subs.indexOf(pid) !== -1;
+    if(isSub){
+      rows.push({ ri:ri, roundTime:rd.roundTime, type:'sub',
+        waveTime:rd.roundTime, court:'-', partner:null,
+        oppA:null, oppB:null });
+      return;
+    }
+    rd.waves.forEach(function(wv, wi){
+      wv.matches.forEach(function(m, mi){
+        var inMatch = [m.pA1,m.pA2,m.pB1,m.pB2].indexOf(pid) !== -1;
+        if(!inMatch) return;
+        var isA = (m.pA1===pid||m.pA2===pid);
+        var partner = isA ? (m.pA1===pid?m.pA2:m.pA1) : (m.pB1===pid?m.pB2:m.pB1);
+        var opp1   = isA ? m.pB1 : m.pA1;
+        var opp2   = isA ? m.pB2 : m.pA2;
+        var res    = getRes(ri, wi, mi);
+        var myScore  = isA ? res.ga : res.gb;
+        var oppScore = isA ? res.gb : res.ga;
+        rows.push({ ri:ri, roundTime:rd.roundTime, type:'match',
+          wi:wi, mi:mi, waveTime:wv.waveTime,
+          court:'T'+(mi+1), partner:partner,
+          opp1:opp1, opp2:opp2,
+          myScore:myScore, oppScore:oppScore,
+          early:!!m._early });
+      });
+    });
+  });
+  return rows;
+}
+
+// Impression fiche individuelle
+window.printPlayerSchedule = function(pid){
+  if(!ST.schedule.length){ alert('Aucun programme généré.'); return; }
+  var p   = ST.players.find(function(x){return x.id===pid;});
+  if(!p) return;
+  var rows = getPlayerSchedule(pid);
+  var pts=0, wins=0, draws=0, losses=0;
+
+  var tableRows = rows.map(function(row){
+    if(row.type==='sub'){
+      return '<tr style="background:#fffbe8">'
+        +'<td style="padding:6px 8px;font-weight:700;color:#333">Tour '+(row.ri+1)+'</td>'
+        +'<td style="padding:6px 8px;color:#888">'+row.roundTime+'</td>'
+        +'<td colspan="4" style="padding:6px 8px;font-weight:700;color:#b87c00;text-align:center">🟡 Remplaçant — au repos ce tour</td>'
+        +'</tr>';
+    }
+    var done = row.myScore!==''&&row.oppScore!=='';
+    var result='', bg='#fff', rc='#999';
+    if(done){
+      var ms=+row.myScore, os=+row.oppScore;
+      if(ms>os){result='✅ Victoire';bg='#f0fff5';rc='#1e8c45';wins++;pts+=3;}
+      else if(ms<os){result='❌ Défaite';bg='#fff5f5';rc='#c0281a';losses++;pts+=0;}
+      else{result='🟡 Nul';bg='#fffbe8';rc='#b87c00';draws++;pts+=1;}
+    }
+    var scoreStr = done ? '<strong style="font-size:15px">'+row.myScore+'</strong> – <strong style="font-size:15px">'+row.oppScore+'</strong>' : '_ – _';
+    return '<tr style="background:'+bg+'">'
+      +'<td style="padding:6px 8px;font-weight:700;color:#333">Tour '+(row.ri+1)+(row.early?' <span style=\"font-size:9px;background:#e0e8ff;color:#3060c0;border-radius:3px;padding:1px 4px\">anticipé</span>':'')+'</td>'
+      +'<td style="padding:6px 8px;color:#555">'+row.waveTime+'</td>'
+      +'<td style="padding:6px 8px;font-weight:700;color:#3060c0">'+row.court+'</td>'
+      +'<td style="padding:6px 8px">'+pName(row.partner)+'</td>'
+      +'<td style="padding:6px 8px;color:#555">'+pName(row.opp1)+' + '+pName(row.opp2)+'</td>'
+      +'<td style="padding:6px 8px;text-align:center">'+scoreStr+'<br><span style="font-size:10px;color:'+rc+'">'+result+'</span></td>'
+      +'</tr>';
+  }).join('');
+
+  var body = '<div style="display:flex;align-items:center;gap:16px;margin-bottom:18px;border-bottom:2px solid #1a1410;padding-bottom:12px">'
+    +'<div style="font-size:40px">'+(p.g==='F'?'👩':'👨')+'</div>'
+    +'<div><div style="font-size:20px;font-weight:900;color:#1a1410">'+p.name+'</div>'
+    +'<div style="font-size:12px;color:#666;margin-top:2px">'
+    +'Niveau '+p.lv+' · Tournoi Pickleball Americano · '+ST.cfg.n+' joueurs · '+ST.cfg.t+' terrains · '+ST.cfg.r+' tours'
+    +'</div></div></div>'
+    +'<table style="width:100%;border-collapse:collapse;margin-bottom:18px">'
+    +'<thead><tr style="background:#1a1410;color:#fff">'
+    +'<th style="padding:7px 8px;text-align:left;font-size:11px">TOUR</th>'
+    +'<th style="padding:7px 8px;text-align:left;font-size:11px">HORAIRE</th>'
+    +'<th style="padding:7px 8px;text-align:left;font-size:11px">TERRAIN</th>'
+    +'<th style="padding:7px 8px;text-align:left;font-size:11px">PARTENAIRE</th>'
+    +'<th style="padding:7px 8px;text-align:left;font-size:11px">ADVERSAIRES</th>'
+    +'<th style="padding:7px 8px;text-align:center;font-size:11px">SCORE / RÉSULTAT</th>'
+    +'</tr></thead><tbody>'+tableRows+'</tbody></table>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap">'
+    +'<div style="background:#f7f7f7;border:1px solid #ddd;border-radius:8px;padding:10px 18px;text-align:center">'
+    +'<div style="font-size:22px;font-weight:900;color:#1a8c45">'+pts+'</div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px">Points</div></div>'
+    +'<div style="background:#f0fff5;border:1px solid #b8e8c8;border-radius:8px;padding:10px 18px;text-align:center">'
+    +'<div style="font-size:22px;font-weight:900;color:#1e8c45">'+wins+'</div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px">Victoires</div></div>'
+    +'<div style="background:#fffbe8;border:1px solid #e8dca0;border-radius:8px;padding:10px 18px;text-align:center">'
+    +'<div style="font-size:22px;font-weight:900;color:#b87c00">'+draws+'</div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px">Nuls</div></div>'
+    +'<div style="background:#fff5f5;border:1px solid #e8b8b8;border-radius:8px;padding:10px 18px;text-align:center">'
+    +'<div style="font-size:22px;font-weight:900;color:#c0281a">'+losses+'</div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px">Défaites</div></div>'
+    +'</div>';
+
+  _pOpenWindow('player_'+pid, 'Programme — '+p.name+' — Pickleball Americano', body);
+};
+
+// ── Vue spectateur : modal programme joueur ────────────────
+window.showPlayerList = function(){
+  var el = document.getElementById('playerListModal');
+  if(el){ el.style.display='flex'; return; }
+  // Créer la modal dynamiquement
+  var modal = document.createElement('div');
+  modal.id = 'playerListModal';
+  modal.style.cssText='position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,.78);backdrop-filter:blur(5px);display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow-y:auto';
+  modal.innerHTML = '<div style="max-width:440px;width:100%;background:#16202e;border:1.5px solid rgba(122,220,255,.25);border-radius:16px;padding:0 0 20px;overflow:hidden">'
+    +'<div style="background:linear-gradient(135deg,#0d1c30,#1a2e48);padding:18px 20px;display:flex;align-items:center;justify-content:space-between">'
+    +'<div><div style="font-family:\'Oswald\',sans-serif;font-size:18px;font-weight:700;color:#7adcff;letter-spacing:1px;text-transform:uppercase">👤 Joueurs inscrits</div>'
+    +'<div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:3px">Sélectionnez un joueur pour voir son programme</div></div>'
+    +'<button onclick="document.getElementById(\'playerListModal\').style.display=\'none\'" style="background:none;border:none;color:rgba(255,255,255,.5);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1">×</button>'
+    +'</div>'
+    +'<div id="playerListContent" style="padding:14px 16px"></div>'
+    +'</div>';
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(e){ if(e.target===modal) modal.style.display='none'; });
+  renderPlayerListModal();
+};
+
+function renderPlayerListModal(){
+  var el = document.getElementById('playerListContent');
+  if(!el) return;
+  var sorted = ST.players.slice(0, ST.cfg.n).sort(function(a,b){return a.name.localeCompare(b.name,'fr');});
+  el.innerHTML = sorted.map(function(p){
+    return '<button onclick="showPlayerProgram(\''+p.id+'\')" style="'
+      +'width:100%;display:flex;align-items:center;gap:12px;padding:11px 14px;margin-bottom:6px;'
+      +'background:linear-gradient(135deg,rgba(255,255,255,.04),rgba(255,255,255,.02));'
+      +'border:1px solid rgba(255,255,255,.1);border-radius:10px;'
+      +'color:#fff;cursor:pointer;text-align:left;transition:all .15s;'
+      +'" onmouseover="this.style.borderColor=\'rgba(122,220,255,.4)\';this.style.background=\'rgba(122,220,255,.07)\'"'
+      +' onmouseout="this.style.borderColor=\'rgba(255,255,255,.1)\';this.style.background=\'linear-gradient(135deg,rgba(255,255,255,.04),rgba(255,255,255,.02))\'">'
+      +'<span style="font-size:22px">'+(p.g==='F'?'👩':'👨')+'</span>'
+      +'<div style="flex:1">'
+      +'<div style="font-weight:700;font-size:14px">'+p.name+'</div>'
+      +'<div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:1px">Niveau '+p.lv+' · '+p.g+'</div>'
+      +'</div>'
+      +'<span style="color:rgba(122,220,255,.6);font-size:18px">›</span>'
+      +'</button>';
+  }).join('');
+}
+
+window.showPlayerProgram = function(pid){
+  var p = ST.players.find(function(x){return x.id===pid;});
+  if(!p) return;
+  var rows = getPlayerSchedule(pid);
+  var modal = document.getElementById('playerListModal');
+  if(modal) modal.style.display='none';
+
+  // Supprimer ancienne modal programme si existe
+  var old = document.getElementById('playerProgramModal');
+  if(old) old.remove();
+
+  var rowsHtml = rows.map(function(row){
+    if(row.type==='sub'){
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;margin-bottom:6px;'
+        +'background:rgba(255,208,50,.06);border:1px solid rgba(255,208,50,.2);border-radius:10px">'
+        +'<div style="min-width:52px;text-align:center"><div style="font-size:11px;color:rgba(255,255,255,.4)">Tour</div>'
+        +'<div style="font-weight:900;font-size:16px;color:#ffd080">'+(row.ri+1)+'</div>'
+        +'<div style="font-size:10px;color:rgba(255,255,255,.35)">'+row.roundTime+'</div></div>'
+        +'<div style="width:1px;height:36px;background:rgba(255,255,255,.1)"></div>'
+        +'<div style="flex:1;text-align:center">'
+        +'<div style="font-size:13px;font-weight:700;color:#ffd080">🟡 Remplaçant</div>'
+        +'<div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:2px">Au repos ce tour</div>'
+        +'</div></div>';
+    }
+    var done = row.myScore!==''&&row.oppScore!=='';
+    var result='', borderC='rgba(255,255,255,.1)', bgC='rgba(255,255,255,.03)', rc='rgba(255,255,255,.5)';
+    if(done){
+      var ms=+row.myScore, os=+row.oppScore;
+      if(ms>os){result='✅ Victoire';borderC='rgba(50,200,100,.35)';bgC='rgba(50,200,100,.07)';rc='#5ddc8e';}
+      else if(ms<os){result='❌ Défaite';borderC='rgba(220,80,80,.35)';bgC='rgba(220,80,80,.07)';rc='#dc7070';}
+      else{result='🟡 Nul';borderC='rgba(255,208,50,.35)';bgC='rgba(255,208,50,.07)';rc='#ffd080';}
+    }
+    return '<div style="display:flex;align-items:stretch;gap:10px;padding:10px 14px;margin-bottom:6px;'
+      +'background:'+bgC+';border:1px solid '+borderC+';border-radius:10px">'
+      +'<div style="min-width:52px;text-align:center">'
+      +'<div style="font-size:11px;color:rgba(255,255,255,.4)">Tour</div>'
+      +'<div style="font-weight:900;font-size:16px;color:#7adcff">'+(row.ri+1)+'</div>'
+      +'<div style="font-size:10px;color:rgba(255,255,255,.35)">'+row.waveTime+'</div>'
+      +'</div>'
+      +'<div style="width:1px;background:rgba(255,255,255,.1)"></div>'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+      +'<span style="font-size:11px;font-weight:700;background:rgba(70,120,200,.3);color:#a0c0ff;border-radius:4px;padding:1px 7px">'+row.court+'</span>'
+      +(row.early?'<span style="font-size:9px;background:rgba(50,80,200,.3);color:#8090e0;border-radius:3px;padding:1px 5px">anticipé</span>':'')
+      +'</div>'
+      +'<div style="font-size:12px;margin-bottom:3px">'
+      +'<span style="color:rgba(255,255,255,.45);font-size:10px">Partenaire </span>'
+      +'<strong style="color:#fff">'+pName(row.partner)+'</strong></div>'
+      +'<div style="font-size:12px;color:rgba(255,255,255,.55)">'
+      +'<span style="font-size:10px;color:rgba(255,255,255,.35)">vs </span>'+pName(row.opp1)+' + '+pName(row.opp2)+'</div>'
+      +'</div>'
+      +'<div style="min-width:54px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center">'
+      +(done
+        ?'<div style="font-size:17px;font-weight:900;color:'+rc+'">'+row.myScore+' – '+row.oppScore+'</div>'
+         +'<div style="font-size:10px;color:'+rc+';margin-top:2px">'+result+'</div>'
+        :'<div style="font-size:14px;color:rgba(255,255,255,.25);font-weight:700">– –</div>')
+      +'</div></div>';
+  }).join('');
+
+  // Statistiques en temps réel
+  var pts=0,wins=0,draws=0,losses=0;
+  rows.forEach(function(row){
+    if(row.type==='match'&&row.myScore!==''&&row.oppScore!==''){
+      var ms=+row.myScore,os=+row.oppScore;
+      if(ms>os){wins++;pts+=3;}else if(ms<os){losses++;}else{draws++;pts+=1;}
+    }
+  });
+
+  var pm = document.createElement('div');
+  pm.id = 'playerProgramModal';
+  pm.style.cssText='position:fixed;inset:0;z-index:8001;background:rgba(0,0,0,.82);backdrop-filter:blur(5px);display:flex;align-items:flex-start;justify-content:center;padding:16px 12px;overflow-y:auto';
+  pm.innerHTML='<div style="max-width:480px;width:100%;background:#16202e;border:1.5px solid rgba(122,220,255,.25);border-radius:16px;overflow:hidden;margin:auto">'
+    // Header
+    +'<div style="background:linear-gradient(135deg,#0d1c30,#1a2e48);padding:16px 20px">'
+    +'<div style="display:flex;align-items:center;gap:14px">'
+    +'<span style="font-size:36px">'+(p.g==='F'?'👩':'👨')+'</span>'
+    +'<div style="flex:1">'
+    +'<div style="font-family:\'Oswald\',sans-serif;font-size:20px;font-weight:700;color:#fff;letter-spacing:.5px">'+p.name+'</div>'
+    +'<div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:2px">Niveau '+p.lv+' · '+ST.cfg.r+' tours au programme</div>'
+    +'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:6px">'
+    +'<button onclick="document.getElementById(\'playerProgramModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.5);font-size:22px;cursor:pointer;padding:2px 6px;line-height:1">×</button>'
+    +(isAdmin()?'<button onclick="printPlayerSchedule(\''+pid+'\')" title="Imprimer" style="background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.6);font-size:13px;cursor:pointer;padding:3px 8px">🖨</button>':'')
+    +'</div></div>'
+    // Mini stats
+    +'<div style="display:flex;gap:8px;margin-top:12px">'
+    +'<div style="flex:1;text-align:center;background:rgba(255,255,255,.06);border-radius:8px;padding:7px 4px"><div style="font-size:18px;font-weight:900;color:#5ddc8e">'+pts+'</div><div style="font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.5px">Pts</div></div>'
+    +'<div style="flex:1;text-align:center;background:rgba(50,200,100,.1);border-radius:8px;padding:7px 4px"><div style="font-size:18px;font-weight:900;color:#5ddc8e">'+wins+'</div><div style="font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.5px">Victoires</div></div>'
+    +'<div style="flex:1;text-align:center;background:rgba(255,208,50,.08);border-radius:8px;padding:7px 4px"><div style="font-size:18px;font-weight:900;color:#ffd080">'+draws+'</div><div style="font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.5px">Nuls</div></div>'
+    +'<div style="flex:1;text-align:center;background:rgba(220,80,80,.1);border-radius:8px;padding:7px 4px"><div style="font-size:18px;font-weight:900;color:#dc7070">'+losses+'</div><div style="font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.5px">Défaites</div></div>'
+    +'</div></div>'
+    // Liste des matchs
+    +'<div style="padding:14px 14px 6px">'
+    +'<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px">Programme complet</div>'
+    +rowsHtml
+    +'</div>'
+    // Footer
+    +'<div style="padding:10px 14px;border-top:1px solid rgba(255,255,255,.08);display:flex;gap:8px">'
+    +'<button onclick="document.getElementById(\'playerProgramModal\').remove();showPlayerList()" style="flex:1;padding:10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:rgba(255,255,255,.7);font-family:\'Oswald\',sans-serif;font-size:13px;letter-spacing:.5px;cursor:pointer;text-transform:uppercase">‹ Retour</button>'
+    +(isAdmin()?'<button onclick="printPlayerSchedule(\''+pid+'\')" style="flex:1;padding:10px;background:linear-gradient(135deg,#0d2030,#1a3a50);border:1.5px solid #4a7090;border-radius:8px;color:#7adcff;font-family:\'Oswald\',sans-serif;font-size:13px;letter-spacing:.5px;cursor:pointer;text-transform:uppercase">🖨 Imprimer</button>':'')
+    +'</div></div>';
+
+  document.body.appendChild(pm);
+  pm.addEventListener('click', function(e){ if(e.target===pm) pm.remove(); });
+};
+
+// ── Impression tous les joueurs (admin) ────────────────────
+window.printAllPlayersSchedule = function(){
+  if(!ST.schedule.length){ alert('Aucun programme généré.'); return; }
+  var body='<div style="font-size:18px;font-weight:700;margin-bottom:14px;border-bottom:2px solid #333;padding-bottom:8px">'
+    +'Programmes individuels — Pickleball Americano · '+ST.cfg.n+' joueurs · '+ST.cfg.t+' terrains · '+ST.cfg.r+' tours</div>';
+  ST.players.slice(0,ST.cfg.n).sort(function(a,b){return a.name.localeCompare(b.name,'fr');}).forEach(function(p){
+    var rows=getPlayerSchedule(p.id);
+    body+='<div style="page-break-inside:avoid;margin-bottom:18px;border:1px solid #ccc;border-radius:6px;overflow:hidden">';
+    body+='<div style="background:#1a1410;color:#fff;padding:8px 12px;display:flex;align-items:center;gap:10px">';
+    body+='<span style="font-size:20px">'+(p.g==='F'?'👩':'👨')+'</span>';
+    body+='<span style="font-size:15px;font-weight:700">'+p.name+'</span>';
+    body+='<span style="font-size:11px;color:#aaa;margin-left:4px">Niv.'+p.lv+'</span></div>';
+    body+='<table style="width:100%;border-collapse:collapse">';
+    body+='<thead><tr style="background:#f0ebe4">'
+      +'<th style="padding:5px 7px;font-size:10px;text-align:left">TOUR</th>'
+      +'<th style="padding:5px 7px;font-size:10px;text-align:left">HORAIRE</th>'
+      +'<th style="padding:5px 7px;font-size:10px;text-align:left">TERRAIN</th>'
+      +'<th style="padding:5px 7px;font-size:10px;text-align:left">PARTENAIRE</th>'
+      +'<th style="padding:5px 7px;font-size:10px;text-align:left">ADVERSAIRES</th>'
+      +'</tr></thead><tbody>';
+    rows.forEach(function(row){
+      if(row.type==='sub'){
+        body+='<tr style="background:#fffbe8"><td style="padding:5px 7px;font-weight:700">T'+(row.ri+1)+'</td>'
+          +'<td style="padding:5px 7px;color:#888">'+row.roundTime+'</td>'
+          +'<td colspan="3" style="padding:5px 7px;color:#b87c00;font-weight:700">🟡 Remplaçant</td></tr>';
+      } else {
+        body+='<tr style="background:#fff;border-bottom:1px solid #eee">'
+          +'<td style="padding:5px 7px;font-weight:700">T'+(row.ri+1)+'</td>'
+          +'<td style="padding:5px 7px">'+row.waveTime+'</td>'
+          +'<td style="padding:5px 7px;font-weight:700;color:#3060c0">'+row.court+'</td>'
+          +'<td style="padding:5px 7px">'+pName(row.partner)+'</td>'
+          +'<td style="padding:5px 7px;color:#555">'+pName(row.opp1)+' + '+pName(row.opp2)+'</td>'
+          +'</tr>';
+      }
+    });
+    body+='</tbody></table></div>';
+    body+='<div style="height:6px"></div>';
+  });
+  _pOpenWindow('all_players','Programmes individuels — Pickleball Americano',body);
+};
+
 window.printFinal = function(){var st=computeStandings();var med=['1er','2e','3e'];var brd=['#d4a820','#909ab8','#c08050'];var bbg=['#fffbe8','#f5f5f8','#fff8f4'];var podHTML='<div style="display:flex;gap:12px;justify-content:center;margin-bottom:22px;flex-wrap:wrap">';st.slice(0,3).forEach(function(s,i){podHTML+='<div style="text-align:center;padding:14px 18px;border:2px solid '+brd[i]+';border-radius:10px;min-width:130px;background:'+bbg[i]+'"><div style="font-size:22px;font-weight:700;color:'+brd[i]+'">'+med[i]+'</div><div style="font-size:16px;font-weight:700;margin:5px 0">'+s.name+'</div><div style="font-size:26px;font-weight:900;color:#1e8c45">'+s.pts+'</div><div style="font-size:11px;color:#888">'+s.w+'V &middot; '+s.d+'N &middot; '+s.l+'D</div></div>';});podHTML+='</div>';var body='<div style="font-size:20px;font-weight:700;margin-bottom:14px;border-bottom:3px solid #1a1410;padding-bottom:10px">Classement Final &mdash; Pickleball Americano &middot; '+ST.cfg.n+' joueurs &middot; '+ST.cfg.r+' tours</div>';body+=podHTML;body+=_pRankTable(st);body+='<div style="margin-top:8px;font-size:10px;color:#888">Departage : 1. Points &middot; 2. Goal-average general &middot; 3. G-A particulier &middot; 4. Buts marques &middot; 5. Victoires &middot; 6. Matchs joues</div>';_pOpenWindow('final','Classement Final - Pickleball Americano',body);};
 window.printAllResults = function(){var st=computeStandings();var body='<div style="font-size:17px;font-weight:700;margin-bottom:12px;border-bottom:2px solid #333;padding-bottom:8px">Pickleball Americano &mdash; Resultats complets &middot; '+ST.cfg.n+' joueurs &middot; '+ST.cfg.r+' tours</div>';ST.schedule.forEach(function(rd,ri){body+=_pRoundBlock(rd,ri,true);});body+='<div style="page-break-before:always"><div style="font-size:15px;font-weight:700;margin-bottom:10px;border-bottom:2px solid #333;padding-bottom:6px">Classement Final</div>'+_pRankTable(st,'4px 5px')+'</div>';_pOpenWindow('all','Resultats complets - Pickleball Americano',body);};
 
@@ -2559,6 +2851,9 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <button class="spec-nav-btn" data-target="5" onclick="spectatorGoLive(5)">
     🏆 Classement
   </button>
+  <button class="spec-nav-btn" data-target="P" onclick="showPlayerList()">
+    👤 Joueurs
+  </button>
   <button class="spec-nav-btn" onclick="toggleRules()">
     📋 Règlement
   </button>
@@ -2687,6 +2982,7 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <div class="flex g8 mt16">
     <button class="btn btn-ghost btn-sm" onclick="regenerateLocal()">🔀 Régénérer</button>
     <button class="btn btn-b btn-sm" onclick="printPlanning()">🖨 Imprimer le planning</button>
+    <button class="btn btn-b btn-sm" onclick="printAllPlayersSchedule()">🖨 Programmes individuels</button>
     <button class="btn btn-g" onclick="startTournament()">▶ Démarrer le tournoi →</button>
   </div>
 </div>
