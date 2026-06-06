@@ -1,6 +1,13 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<script>
+  // Auto-rechargement à la première ouverture de chaque session
+  if(!sessionStorage.getItem('_reloaded')){
+    sessionStorage.setItem('_reloaded','1');
+    location.reload(true);
+  }
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
@@ -2701,6 +2708,19 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   .sinp{border:1px solid #999!important;color:#000!important}
   .round-block{break-inside:avoid;border:1px solid #ccc!important}
   .no-print{display:none!important}.print-only{display:block!important}.modal-bg{display:none!important}
+
+  /* Règlement compact à l'impression */
+  #pageR .wrap{padding:4px 4px 8px!important}
+  #pageR .sec-ttl{font-size:16px!important;margin-bottom:8px!important}
+  #pageR .card{padding:8px 10px!important;margin-top:6px!important;border-radius:4px!important}
+  #pageR .card+.card,#pageR .card.mt12{margin-top:5px!important}
+  #pageR .card-ttl{font-size:12px!important;margin-bottom:6px!important;padding-bottom:4px!important}
+  #pageR .rules-section{margin-bottom:4px!important}
+  #pageR .rules-section h4{font-size:11px!important;margin-bottom:3px!important;padding-bottom:2px!important}
+  #pageR .rules-section p,#pageR .rules-section li{font-size:10px!important;line-height:1.45!important;margin-bottom:1px!important}
+  #pageR .rules-section ul,#pageR .rules-section ol{padding-left:14px!important;margin:2px 0!important}
+  #pageR .mt12{margin-top:5px!important}
+  #pageR .mt16{margin-top:6px!important}
 }
 </style>
 </head>
@@ -2944,7 +2964,12 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
 <!-- PAGE 1 — CONFIG (admin uniquement) -->
 <div class="page active" id="page1">
 <div class="wrap">
-  <div class="sec-ttl">⚙️ Configuration du tournoi</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px">
+    <div class="sec-ttl" style="margin-bottom:0">⚙️ Configuration du tournoi</div>
+    <button class="btn btn-ghost btn-sm" onclick="reloadApp()" style="font-size:12px;gap:6px;flex-shrink:0" title="Recharge la dernière version sans perdre les données">
+      🔄 Recharger
+    </button>
+  </div>
   <div class="card">
     <div class="card-ttl">🏟️ Structure</div>
     <div class="fg">
@@ -2999,15 +3024,6 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
   <div class="info mt12" id="cfgBox"></div>
   <div class="mt16"><button class="btn btn-g" onclick="saveCfgAndNext()">Saisir les joueurs →</button></div>
 
-  <div style="margin-top:32px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08)">
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px">Application</div>
-    <button class="btn btn-ghost btn-sm" onclick="reloadApp()" style="font-size:12px;gap:6px">
-      🔄 Recharger l'application
-    </button>
-    <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5">
-      Recharge la dernière version du fichier HTML sans perdre les données en cours.
-    </div>
-  </div>
 </div>
 </div>
 
