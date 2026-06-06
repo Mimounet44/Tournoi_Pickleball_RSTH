@@ -103,6 +103,20 @@ onAuthStateChanged(auth, async (user)=>{
     CURRENT_USER = user;
     await ensureUserDoc(user);
     USER_ROLE = await getUserRole(user.uid);
+    // Spectateur : bloquer si le live n'est pas ouvert
+    if(USER_ROLE === 'spectator'){
+      try {
+        const snap = await getDoc(doc(db,'tournament','current'));
+        ST.liveOpen = snap.exists() ? snap.data().liveOpen === true : false;
+      } catch(e){ ST.liveOpen = false; }
+      if(!ST.liveOpen){
+        await signOut(auth);
+        CURRENT_USER = null; USER_ROLE = null;
+        showLogin();
+        showAuthMsg('⏰ Le live n\'est pas encore ouvert. Revenez un peu plus tard !', 'red');
+        return;
+      }
+    }
     showApp();
     subscribeToTournament();
     subscribeToResults();
