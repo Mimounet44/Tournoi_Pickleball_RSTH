@@ -30,14 +30,13 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, collection,
                                     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAvppGIS7M12LFgaPEuFdo-ed6rrAtgcSc",
-  authDomain: "tournoi-de-pickleball-flexible.firebaseapp.com",
-  projectId: "tournoi-de-pickleball-flexible",
-  storageBucket: "tournoi-de-pickleball-flexible.firebasestorage.app",
-  messagingSenderId: "64638196209",
-  appId: "1:64638196209:web:dd47d079b5698ee80fcc50"
+  apiKey: "AIzaSyAa-It1GI_9KTAvQKzkLWNANv91QnZar04",
+  authDomain: "tournoi-rsth-interclubs.firebaseapp.com",
+  projectId: "tournoi-rsth-interclubs",
+  storageBucket: "tournoi-rsth-interclubs.firebasestorage.app",
+  messagingSenderId: "894506578702",
+  appId: "1:894506578702:web:7da1d8f739873082a3dd5f"
 };
-
 const app       = initializeApp(firebaseConfig);
 const auth      = getAuth(app);
 const db        = getFirestore(app);
@@ -160,17 +159,16 @@ window.logout = async function(){
 
 // ── Mode Live sans compte avec redirection ────────────────
 window.enterLiveModeAndGo = function(target){
-  // Le règlement est toujours accessible, mais Live/Classement nécessitent liveOpen
-  if(target !== 'R' && !ST.liveOpen){
+  // Règlement et liste joueurs toujours accessibles sans liveOpen
+  const alwaysOpen = (target === 'R' || target === 'P');
+  if(!alwaysOpen && !ST.liveOpen){
     const overlay = document.getElementById('liveClosedOverlay');
     if(overlay) overlay.style.display='flex';
     return;
   }
   CURRENT_USER = null;
   USER_ROLE    = 'spectator';
-  // Si on a passé la garde ci-dessus, le live est forcément ouvert
-  // On le confirme immédiatement (le snapshot Firestore le reconfirmera)
-  if(target !== 'R') ST.liveOpen = true;
+  if(!alwaysOpen) ST.liveOpen = true;
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   applyRoleUI();
@@ -178,6 +176,8 @@ window.enterLiveModeAndGo = function(target){
   subscribeToResultsPublic();
   if(target === 'R'){
     setTimeout(()=>{ if(typeof toggleRules==='function') toggleRules(); }, 100);
+  } else if(target === 'P'){
+    setTimeout(()=>{ goTo(4); setTimeout(()=>{ if(typeof showPlayerList==='function') showPlayerList(); },200); }, 100);
   } else if(target === 5){
     setTimeout(()=>{ goTo(5); }, 100);
   } else {
@@ -2744,50 +2744,84 @@ button, .btn, .hdr-btn, .rtab, .spec-nav-btn, .ltab {
      ÉCRAN DE CONNEXION
      ══════════════════════════════════════════════════════════ -->
 <div id="loginScreen">
-  <div class="login-box">
-    <div class="login-brand">🏓 Americano</div>
-    <div class="login-sub">Pickleball Tournament Manager</div>
-    <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:12px"></div>
+  <div class="login-box" style="max-width:420px;padding:0;overflow:hidden;border-radius:20px;border:1px solid rgba(255,255,255,.1)">
 
-    <!-- ACCÈS RAPIDE SPECTATEUR -->
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
-      <div style="text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:4px">Accès spectateur</div>
+    <!-- EN-TÊTE -->
+    <div style="padding:28px 28px 20px;background:linear-gradient(160deg,#1a1008,#0d1020);text-align:center;border-bottom:1px solid rgba(255,255,255,.07)">
+      <div class="login-brand" style="margin-bottom:4px">🏓 Americano</div>
+      <div class="login-sub">Pickleball Tournament Manager</div>
+    </div>
+
+    <div id="authMsg" style="text-align:center;font-size:13px;min-height:18px;padding:8px 28px 0;color:var(--red)"></div>
+
+    <!-- ═══ ZONE SPECTATEUR ═══ -->
+    <div style="padding:20px 20px 18px;background:linear-gradient(160deg,rgba(0,40,90,.55),rgba(0,20,55,.45));border-bottom:2px solid rgba(80,160,255,.3)">
+
+      <!-- Badge -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1e6abf,#0d3a80);border:1.5px solid #5aaaf0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">👁</div>
+        <div>
+          <div style="font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#e8f4ff">Accès Spectateur</div>
+          <div style="font-size:11px;color:rgba(180,220,255,.75)">Sans inscription — accès libre</div>
+        </div>
+      </div>
+
+      <!-- Boutons spectateur -->
       <div style="display:flex;gap:8px">
-        <button onclick="enterLiveModeAndGo(4)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#7adcff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#7adcff'" onmouseout="this.style.borderColor='#4a7090'">
-          <span style="width:6px;height:6px;border-radius:50%;background:#ff4444;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span> Live
+        <button onclick="enterLiveModeAndGo(4)"
+          style="flex:1;padding:11px 6px;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.25);border-radius:10px;color:#ffffff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px"
+          onmouseover="this.style.background='rgba(255,255,255,.2)';this.style.borderColor='rgba(255,255,255,.6)'"
+          onmouseout="this.style.background='rgba(255,255,255,.1)';this.style.borderColor='rgba(255,255,255,.25)'">
+          <span style="width:7px;height:7px;border-radius:50%;background:#ff5555;animation:blink 1.2s ease-in-out infinite;flex-shrink:0"></span>Live
         </button>
-        <button onclick="enterLiveModeAndGo(5)" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:#ffd080;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='#ffd080'" onmouseout="this.style.borderColor='#4a7090'">
-          🏆 Classement
+        <button onclick="enterLiveModeAndGo('P')"
+          style="flex:1;padding:11px 6px;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.25);border-radius:10px;color:#ffffff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px"
+          onmouseover="this.style.background='rgba(255,255,255,.2)';this.style.borderColor='rgba(255,255,255,.6)'"
+          onmouseout="this.style.background='rgba(255,255,255,.1)';this.style.borderColor='rgba(255,255,255,.25)'">
+          👤&nbsp;Joueurs
         </button>
-        <button onclick="enterLiveModeAndGo('R')" style="flex:1;padding:10px 8px;background:linear-gradient(135deg,var(--ink2),#1a3050);border:1.5px solid #4a7090;border-radius:9px;color:rgba(255,255,255,.7);font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px" onmouseover="this.style.borderColor='rgba(255,255,255,.6)'" onmouseout="this.style.borderColor='#4a7090'">
-          📋 Règlement
+        <button onclick="enterLiveModeAndGo('R')"
+          style="flex:1;padding:11px 6px;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.25);border-radius:10px;color:#ffffff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.6px;cursor:pointer;text-transform:uppercase;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px"
+          onmouseover="this.style.background='rgba(255,255,255,.2)';this.style.borderColor='rgba(255,255,255,.6)'"
+          onmouseout="this.style.background='rgba(255,255,255,.1)';this.style.borderColor='rgba(255,255,255,.25)'">
+          📋&nbsp;Règlement
         </button>
       </div>
     </div>
 
-    <div style="text-align:center;font-size:11px;color:var(--dim);margin-bottom:16px;position:relative">
-      <span style="background:var(--s0);padding:0 10px;position:relative;z-index:1">Connexion staff</span>
-      <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:var(--bdr)"></div>
-    </div>
+    <!-- ═══ ZONE STAFF ═══ -->
+    <div style="padding:20px 20px 24px;background:linear-gradient(160deg,rgba(50,25,0,.6),rgba(25,12,0,.5))">
 
-    <!-- CONNEXION STAFF -->
-    <div class="login-form" id="tabLogin">
-      <div>
-        <label>Email</label>
-        <input type="email" id="li_email" placeholder="votre@email.com" onkeydown="if(event.key==='Enter')loginEmail()">
+      <!-- Badge -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#7a4a00,#3a2000);border:1.5px solid #c08030;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">🔐</div>
+        <div>
+          <div style="font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#ffe5a0">Accès Staff</div>
+          <div style="font-size:11px;color:rgba(255,220,150,.75)">Admin · Scorer — compte requis</div>
+        </div>
       </div>
-      <div>
-        <label>Mot de passe</label>
-        <input type="password" id="li_pwd" placeholder="••••••••" onkeydown="if(event.key==='Enter')loginEmail()">
-      </div>
-      <button class="btn btn-g" style="width:100%;justify-content:center" onclick="loginEmail()">→ Se connecter</button>
-      <div class="login-divider">ou</div>
-      <button class="btn-google" onclick="loginGoogle()">
-        <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/></svg>
-        Continuer avec Google
-      </button>
-    </div>
 
+      <!-- Connexion staff -->
+      <div class="login-form" id="tabLogin">
+        <div>
+          <label style="color:#ffe5a0">Email</label>
+          <input type="email" id="li_email" placeholder="votre@email.com" onkeydown="if(event.key==='Enter')loginEmail()"
+            style="background:rgba(20,10,0,.7);border-color:rgba(180,120,40,.7);color:#fff;placeholder-color:#aaa">
+        </div>
+        <div>
+          <label style="color:#ffe5a0">Mot de passe</label>
+          <input type="password" id="li_pwd" placeholder="••••••••" onkeydown="if(event.key==='Enter')loginEmail()"
+            style="background:rgba(20,10,0,.7);border-color:rgba(180,120,40,.7);color:#fff">
+        </div>
+        <button class="btn btn-g" style="width:100%;justify-content:center" onclick="loginEmail()">→ Se connecter</button>
+        <div class="login-divider">ou</div>
+        <button class="btn-google" onclick="loginGoogle()">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/></svg>
+          Continuer avec Google
+        </button>
+      </div>
+
+    </div>
   </div>
 </div>
 
